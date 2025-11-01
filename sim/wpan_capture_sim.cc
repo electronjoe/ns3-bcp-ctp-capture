@@ -70,12 +70,29 @@ SetTxDbmAndNoise(Ptr<LrWpanNetDevice> dev,
   Ptr<SpectrumValue> txPsd = helper.CreateTxPowerSpectralDensity(txW, channelNumber);
   phy->SetTxPowerSpectralDensity(txPsd);
 
-  // Set the noise PSD - uses default thermal noise for the channel
+  // Set the noise PSD with explicit thermal noise + NF
+  // Noise Factor = 10^(NF_dB / 10) - this is a linear ratio, not dB
+  double noiseFactor = std::pow(10.0, noiseFigureDb / 10.0);
+  helper.SetNoiseFactor(noiseFactor);
   Ptr<SpectrumValue> noise = helper.CreateNoisePowerSpectralDensity(channelNumber);
   phy->SetNoisePowerSpectralDensity(noise);
+
+  // Note: We do NOT disable MAC retries when measuring at PHY level
+  // PHY traces capture all reception attempts, including retransmissions
+  // MAC retries are needed for proper link operation (ACKs, etc.)
 }
 
-// Hook MAC traces for per-link success (TxOk) vs failures (TxDrop)
+// Application-level packet reception counter
+struct RxCounters {
+  uint32_t appRx{0};  // Count of packets received at application (PacketSink)
+};
+
+static void
+OnPacketSinkRx(RxCounters* c, Ptr<const Packet> p, const Address& addr) {
+  c->appRx++;
+}
+
+// Keep MAC counters for debugging/comparison (optional)
 struct MacCounters {
   uint32_t ok{0}, drop{0};
 };
@@ -191,7 +208,7 @@ int main(int argc, char** argv) {
 
   if (mode == "per-sinr-sweep") {
     std::ofstream csv(cfg.outDir + "/per_vs_sinr.csv");
-    csv << "distance_m,sinr_db,packets,tx_ok,tx_drop,per\n";
+    csv << "distance_m,sinr_db,mac_tx_ok,mac_tx_drop,mac_rx_data,per\n";
 
     for (double d : cfg.distances) {
       auto scene = MakeScene(2, cfg);
@@ -219,12 +236,17 @@ int main(int argc, char** argv) {
       auto appsC = onoff.Install(scene.nodes.Get(0));
       appsC.Start(Seconds(5.0)); appsC.Stop(Seconds(105.0));
 
-      // Trace MAC on sender (best proxy for link-level PER in this setup)
-      MacCounters ctr{};
+      // Trace PacketSink to count application-layer packets received
+      RxCounters rxCtr{};
+      Ptr<PacketSink> pktSink = DynamicCast<PacketSink>(appsS.Get(0));
+      pktSink->TraceConnectWithoutContext("Rx", MakeBoundCallback(&OnPacketSinkRx, &rxCtr));
+
+      // Trace MAC on sender to count transmitted frames
+      MacCounters macCtr{};
       auto dev0 = DynamicCast<lrwpan::LrWpanNetDevice>(scene.devs.Get(0));
       auto mac0 = dev0->GetMac();
-      mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &ctr));
-      mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &ctr));
+      mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &macCtr));
+      mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &macCtr));
 
       // Compute mean SINR (no interferers)
       auto mm0 = scene.nodes.Get(0)->GetObject<MobilityModel>();
@@ -235,18 +257,22 @@ int main(int argc, char** argv) {
       Simulator::Run();
       Simulator::Destroy();
 
+      // PER = (transmitted - received) / transmitted
+      // macCtr.ok = frames successfully transmitted (ACKed)
+      // rxCtr.appRx = packets received at application layer (PacketSink)
       double per = 0.0;
-      uint32_t n = ctr.ok + ctr.drop;
-      if (n > 0) per = (double)ctr.drop / (double)n;
+      uint32_t txTotal = macCtr.ok + macCtr.drop;
+      if (txTotal > 0) per = (double)(txTotal - rxCtr.appRx) / (double)txTotal;
       csv << std::fixed << std::setprecision(2)
-          << d << "," << sinrDb << "," << n << "," << ctr.ok << "," << ctr.drop << "," << per << "\n";
+          << d << "," << sinrDb << "," << macCtr.ok << "," << macCtr.drop << ","
+          << rxCtr.appRx << "," << per << "\n";
     }
     csv.close();
   }
   else if (mode == "capture-test") {
     // Three nodes: 0->1 (desired), 2 interferer near 1. Sweep P2-P0 around captureDb.
     std::ofstream csv(cfg.outDir + "/capture_toggle.csv");
-    csv << "delta_db,desired_ok,desired_drop,per\n";
+    csv << "delta_db,mac_tx_ok,mac_rx_data,per\n";
 
     std::vector<double> deltas = {-8,-6,-4,-2,0,2,4,6,8};
     for (double ddb : deltas) {
@@ -292,18 +318,24 @@ int main(int argc, char** argv) {
       auto appsI = interferer.Install(scene.nodes.Get(2));
       appsI.Start(Seconds(5.0)); appsI.Stop(Seconds(25.0));
 
-      MacCounters ctr{};
+      // Trace PacketSink to count application-layer packets received
+      RxCounters rxCtr{};
+      Ptr<PacketSink> pktSink = DynamicCast<PacketSink>(appsS.Get(0));
+      pktSink->TraceConnectWithoutContext("Rx", MakeBoundCallback(&OnPacketSinkRx, &rxCtr));
+
+      // Trace MAC on desired sender (node 0)
+      MacCounters macCtr{};
       auto mac0 = dev0->GetMac();
-      mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &ctr));
-      mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &ctr));
+      mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &macCtr));
+      mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &macCtr));
 
       Simulator::Stop(Seconds(125.0));
       Simulator::Run();
       Simulator::Destroy();
 
-      uint32_t n = ctr.ok + ctr.drop;
-      double per = (n>0) ? (double)ctr.drop / (double)n : 1.0;
-      csv << ddb << "," << ctr.ok << "," << ctr.drop << "," << per << "\n";
+      uint32_t txTotal = macCtr.ok + macCtr.drop;
+      double per = (txTotal>0) ? (double)(txTotal - rxCtr.appRx) / (double)txTotal : 1.0;
+      csv << ddb << "," << macCtr.ok << "," << rxCtr.appRx << "," << per << "\n";
     }
     csv.close();
   }
