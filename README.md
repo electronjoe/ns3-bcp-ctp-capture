@@ -77,10 +77,11 @@ make -j$(nproc)
 # From sim/build directory
 
 # PER vs SINR sweep
+# Note: Use -20 dBm power to achieve SINR range near beta threshold (7 dB)
 ./wpan-capture-sim \
   --mode=per-sinr-sweep \
   --betaDb=7 \
-  --txPowerDbm=0 \
+  --txPowerDbm=-20 \
   --noiseFigureDb=10 \
   --bandwidthHz=2000000 \
   --out=../../out/calibration
@@ -90,7 +91,7 @@ make -j$(nproc)
   --mode=capture-test \
   --captureDb=6 \
   --betaDb=7 \
-  --txPowerDbm=0 \
+  --txPowerDbm=-20 \
   --noiseFigureDb=10 \
   --bandwidthHz=2000000 \
   --out=../../out/calibration
@@ -106,18 +107,21 @@ python3 ../../scripts/plot_recipes.py cap ../../out/calibration/capture_toggle.c
 
 ### Phase 1 Calibration (Current)
 
-1. **Transmit Power Control:** ns-3 `LrWpanPhy` does not expose a simple `SetTransmitPower()` or `TxPower` attribute. The current implementation uses default transmit power, resulting in very high SINR values (22-38 dB). This prevents observation of PER variation near the beta threshold.
+**Resolved:**
+- ✅ **Transmit Power Control:** Fixed using `LrWpanSpectrumValueHelper`. Can now set arbitrary transmit power in dBm and achieve desired SINR ranges. See **plan/PHASE_1_POWER_FIX_RESULTS.md** for implementation details.
 
-2. **Low Packet Counts:** Only ~6 packets are transmitted per test instead of the configured 400, limiting statistical significance.
+**Remaining:**
+1. **Low Packet Counts:** Only ~6 packets are transmitted per test instead of the configured 400, limiting statistical significance.
+   - Likely causes: IPv6 neighbor discovery delays, UDP Echo timing, MAC initialization
+   - **Workaround:** Increase simulation duration or switch to OnOff application
+   - **Impact:** Cannot measure PER statistically (need 400+ packets)
 
-3. **No PER Variation:** All calibration points show 0% PER because SINR is too high for the tested distance range (6-20m).
+**Current Status:**
+- SINR control working: Can achieve 2-18 dB range with -20 dBm transmit power (spans beta threshold of 7 dB)
+- Per-node power setting working: Capture test can set different powers on interferers
+- Need to fix packet count to observe PER variation and complete Phase 1 DoD
 
-**Workaround Options:**
-- Use much larger distances (100-500m) to lower SINR
-- Adjust propagation model parameters (referenceLossDb, exponent)
-- Research correct ns-3 API for LrWpanPhy power control
-
-See **plan/PHASE_1_RESULTS.md** for detailed analysis and recommended next steps.
+See **plan/PHASE_1_POWER_FIX_RESULTS.md** for latest results and next steps.
 
 ---
 

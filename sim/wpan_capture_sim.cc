@@ -5,6 +5,7 @@
 #include "ns3/propagation-module.h"
 #include "ns3/spectrum-module.h"
 #include "ns3/lr-wpan-module.h"
+#include "ns3/lr-wpan-spectrum-value-helper.h"
 #include "ns3/sixlowpan-module.h"
 #include "ns3/internet-module.h"
 #include "ns3/applications-module.h"
@@ -12,6 +13,7 @@
 #include <iomanip>
 
 using namespace ns3;
+using namespace ns3::lrwpan;
 using std::string;
 
 NS_LOG_COMPONENT_DEFINE("WpanCaptureCalib");
@@ -43,6 +45,34 @@ static double
 ThermalNoiseDbm(double bandwidthHz, double noiseFigureDb) {
   // kTB (dBm) = -174 dBm/Hz + 10log10(B) + NF
   return -174.0 + 10.0*std::log10(bandwidthHz) + noiseFigureDb;
+}
+
+// dBm/Hz to W/Hz conversion
+static double
+DbmPerHzToWPerHz(double dbmPerHz) { return std::pow(10.0, (dbmPerHz - 30.0)/10.0); }
+
+// Set per-device TX power and noise PSD using LrWpanSpectrumValueHelper
+static void
+SetTxDbmAndNoise(Ptr<LrWpanNetDevice> dev,
+                 double txDbm,
+                 uint8_t channelNumber,      // 11..26 (2.4 GHz)
+                 double noiseFigureDb,       // e.g., 10
+                 double bandwidthHz)         // e.g., 2e6
+{
+  Ptr<LrWpanPhy> phy = dev->GetPhy();
+  LrWpanSpectrumValueHelper helper;
+
+  // Note: Channel is already configured by LrWpanHelper (default channel 11, page 0)
+  // We just create the appropriate PSD for that channel
+
+  // TX PSD shaped for 802.15.4 channel: integral ≈ total TX power (W)
+  double txW = DbmToW(txDbm);
+  Ptr<SpectrumValue> txPsd = helper.CreateTxPowerSpectralDensity(txW, channelNumber);
+  phy->SetTxPowerSpectralDensity(txPsd);
+
+  // Set the noise PSD - uses default thermal noise for the channel
+  Ptr<SpectrumValue> noise = helper.CreateNoisePowerSpectralDensity(channelNumber);
+  phy->SetNoisePowerSpectralDensity(noise);
 }
 
 // Hook MAC traces for per-link success (TxOk) vs failures (TxDrop)
@@ -86,14 +116,15 @@ MakeScene(uint32_t N, const CalibCfg& cfg) {
   s.devs = wpan.Install(s.nodes);
 
   const uint16_t kPanId = 0x0AAA;
+  const uint8_t channelNumber = 11;  // 2.4 GHz channel 11
   for (uint32_t i = 0; i < s.devs.GetN(); ++i) {
     auto dev = DynamicCast<lrwpan::LrWpanNetDevice>(s.devs.Get(i));
     dev->SetAddress(Mac64Address::Allocate());
     dev->GetMac()->SetPanId(kPanId);
     dev->GetMac()->SetShortAddress(Mac16Address::Allocate());
-    // Tx power (dBm) set via PHY method
-    // Note: LrWpanPhy uses spectral density, not direct dBm
-    // For now, we'll rely on default values and focus on propagation model calibration
+
+    // Set transmit power using LrWpanSpectrumValueHelper
+    SetTxDbmAndNoise(dev, cfg.txPowerDbm, channelNumber, cfg.noiseFigureDb, cfg.bandwidthHz);
   }
 
   // IPv6 stack for simple UDP echo
@@ -221,8 +252,10 @@ int main(int argc, char** argv) {
       // Adjust powers: P0 = base, P2 = base + ddb
       auto dev0 = DynamicCast<lrwpan::LrWpanNetDevice>(scene.devs.Get(0));
       auto dev2 = DynamicCast<lrwpan::LrWpanNetDevice>(scene.devs.Get(2));
-      // Note: Power adjustment for capture test would be done here
-      // For now we rely on propagation model distance variation
+
+      // Set desired transmitter to base power (already set in MakeScene)
+      // Set interferer power to base + delta
+      SetTxDbmAndNoise(dev2, cfg.txPowerDbm + ddb, 11, cfg.noiseFigureDb, cfg.bandwidthHz);
 
       // Start desired UDP flow 0->1 (echo)
       uint16_t port = 9;

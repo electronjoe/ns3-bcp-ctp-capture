@@ -1,5 +1,9 @@
 # Problem Statement: ns-3 LrWpanPhy Transmit Power Control
 
+**STATUS: ✅ RESOLVED** - See PHASE_1_POWER_FIX_RESULTS.md for solution
+
+---
+
 ## Context
 
 We are implementing Phase 1 of an IEEE 802.15.4 (lr-wpan) network simulator using **ns-3 (latest from GitLab main branch, ns-3-dev)** on a SpectrumChannel. The goal is to calibrate the PHY layer by measuring Packet Error Rate (PER) as a function of SINR, and to validate capture margin behavior in a three-node interference test. To achieve this, we need to control the transmit power of individual nodes to create specific SINR conditions at receivers.
