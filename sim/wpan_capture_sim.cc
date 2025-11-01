@@ -199,19 +199,25 @@ int main(int argc, char** argv) {
       scene.nodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(0,0,0));
       scene.nodes.Get(1)->GetObject<MobilityModel>()->SetPosition(Vector(d,0,0));
 
-      // UDP echo (0 -> 1)
+      // Use OnOff application for asynchronous packet sending (no waiting for responses)
       uint16_t port = 9;
-      UdpEchoServerHelper server(port);
-      auto appsS = server.Install(scene.nodes.Get(1));
-      appsS.Start(Seconds(0.5)); appsS.Stop(Seconds(10.0));
+
+      // Sink application to receive packets
+      PacketSinkHelper sink("ns3::UdpSocketFactory",
+                           Inet6SocketAddress(Ipv6Address::GetAny(), port));
+      auto appsS = sink.Install(scene.nodes.Get(1));
+      appsS.Start(Seconds(0.5)); appsS.Stop(Seconds(110.0));
 
       Ipv6Address dst = scene.ifaces.GetAddress(1, 1); // global address of node 1
-      UdpEchoClientHelper client(dst, port);
-      client.SetAttribute("MaxPackets", UintegerValue(cfg.packetsPerPoint));
-      client.SetAttribute("Interval", TimeValue(MilliSeconds(10)));
-      client.SetAttribute("PacketSize", UintegerValue(40));
-      auto appsC = client.Install(scene.nodes.Get(0));
-      appsC.Start(Seconds(1.0)); appsC.Stop(Seconds(10.0));
+
+      // OnOff application sends packets at controlled rate without waiting
+      OnOffHelper onoff("ns3::UdpSocketFactory",
+                       Address(Inet6SocketAddress(dst, port)));
+      onoff.SetConstantRate(DataRate("50kbps"), 40);  // 50kbps with 40-byte packets
+      onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=200.0]"));  // Always on
+      onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));   // Never off
+      auto appsC = onoff.Install(scene.nodes.Get(0));
+      appsC.Start(Seconds(5.0)); appsC.Stop(Seconds(105.0));
 
       // Trace MAC on sender (best proxy for link-level PER in this setup)
       MacCounters ctr{};
@@ -225,7 +231,7 @@ int main(int argc, char** argv) {
       auto mm1 = scene.nodes.Get(1)->GetObject<MobilityModel>();
       double sinrDb = ComputeSinrDb(scene.loss, mm0, mm1, {}, cfg.txPowerDbm, cfg.bandwidthHz, cfg.noiseFigureDb);
 
-      Simulator::Stop(Seconds(12.0));
+      Simulator::Stop(Seconds(115.0));
       Simulator::Run();
       Simulator::Destroy();
 
@@ -257,32 +263,41 @@ int main(int argc, char** argv) {
       // Set interferer power to base + delta
       SetTxDbmAndNoise(dev2, cfg.txPowerDbm + ddb, 11, cfg.noiseFigureDb, cfg.bandwidthHz);
 
-      // Start desired UDP flow 0->1 (echo)
+      // Use OnOff application for asynchronous packet sending
       uint16_t port = 9;
-      UdpEchoServerHelper server(port);
-      auto appsS = server.Install(scene.nodes.Get(1));
-      appsS.Start(Seconds(0.5)); appsS.Stop(Seconds(12.0));
+
+      // Sink application to receive packets
+      PacketSinkHelper sink("ns3::UdpSocketFactory",
+                           Inet6SocketAddress(Ipv6Address::GetAny(), port));
+      auto appsS = sink.Install(scene.nodes.Get(1));
+      appsS.Start(Seconds(0.5)); appsS.Stop(Seconds(30.0));
 
       Ipv6Address dst = scene.ifaces.GetAddress(1, 1); // global address of node 1
-      UdpEchoClientHelper client(dst, port);
-      client.SetAttribute("MaxPackets", UintegerValue(cfg.packetsPerPoint));
-      client.SetAttribute("Interval", TimeValue(MilliSeconds(10)));
-      client.SetAttribute("PacketSize", UintegerValue(40));
-      auto appsC = client.Install(scene.nodes.Get(0));
-      appsC.Start(Seconds(1.0)); appsC.Stop(Seconds(12.0));
+
+      // Desired transmitter sends packets at controlled rate
+      OnOffHelper onoff("ns3::UdpSocketFactory",
+                       Address(Inet6SocketAddress(dst, port)));
+      onoff.SetConstantRate(DataRate("8kbps"), 40);  // 8kbps with 40-byte packets = 25 pps
+      onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=100.0]"));  // Always on
+      onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));   // Never off
+      onoff.SetAttribute("MaxBytes", UintegerValue(cfg.packetsPerPoint * 40));
+      auto appsC = onoff.Install(scene.nodes.Get(0));
+      appsC.Start(Seconds(5.0)); appsC.Stop(Seconds(25.0));
 
       // Interferer 2 sends CBR to RX 1 concurrently
       OnOffHelper interferer("ns3::UdpSocketFactory", Address(Inet6SocketAddress(dst, port)));
       interferer.SetConstantRate(DataRate("100kbps"), 40);
+      interferer.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=100.0]"));  // Always on
+      interferer.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));   // Never off
       auto appsI = interferer.Install(scene.nodes.Get(2));
-      appsI.Start(Seconds(1.0)); appsI.Stop(Seconds(12.0));
+      appsI.Start(Seconds(5.0)); appsI.Stop(Seconds(25.0));
 
       MacCounters ctr{};
       auto mac0 = dev0->GetMac();
       mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &ctr));
       mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &ctr));
 
-      Simulator::Stop(Seconds(13.0));
+      Simulator::Stop(Seconds(125.0));
       Simulator::Run();
       Simulator::Destroy();
 
