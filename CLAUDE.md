@@ -27,30 +27,38 @@ ns3-bcp-ctp-capture/
 ├─ LLM.md                   # Generated snapshot of all repo files
 └─ README.md               # Basic setup instructions
 
-**Future structure (once implementation starts):**
+**Current structure (as of Phase 1):**
 ├─ sim/                     # C++ ns-3 harness
-│  ├─ wpan_capture_sim.cc  # Main simulation entry point
-│  ├─ controllers/         # Local and Global routing logic
-│  ├─ apps/               # Source/sink applications
-│  ├─ helpers/            # Channel export, metrics logging, jammer
+│  ├─ wpan_capture_sim.cc  # Main simulation entry point (Phase 1: calibration modes)
+│  ├─ helpers/            # Channel export utilities
+│  │  ├─ channel_export.h
+│  │  └─ channel_export.cc
+│  ├─ build/              # CMake build directory (gitignored)
 │  └─ CMakeLists.txt      # Build config
-├─ lpf/                    # Python LPF estimation pipeline
 ├─ configs/                # YAML config files
+│  └─ capture_medium.yaml # PHY/MAC parameters
 ├─ scripts/                # Run harness, post-processing, plotting
+│  └─ plot_recipes.py     # Calibration plotting
 └─ out/                    # Results (CSV, JSON, plots)
+   └─ calibration/        # Phase 1 outputs
+
+**Future additions (Phases 2+):**
+├─ sim/controllers/        # Local and Global routing logic
+├─ sim/apps/              # Source/sink applications
+├─ lpf/                   # Python LPF estimation pipeline
 ```
 
 ## Build & Run Commands
 
-### Phase 0: Example Project (Already Working)
+### Phase 0: Example Project (Verification)
 
 The example demonstrates a standalone 4-node line topology with ns-3. To build and run:
 
 ```bash
 cd example
 mkdir -p build && cd build
-cmake -G Ninja -DCMAKE_PREFIX_PATH="$HOME/opt/ns3" ..
-ninja -j$(nproc)
+cmake -DCMAKE_PREFIX_PATH="$HOME/opt/ns3" ..
+make -j$(nproc)
 ./line-lr-wpan
 ```
 
@@ -61,14 +69,37 @@ Produces: `line-lr-wpan-*.pcap` files (one per node) in the current directory.
 - Set environment in shell: `export CMAKE_PREFIX_PATH="$HOME/opt/ns3:$CMAKE_PREFIX_PATH"`
 - See PHASE_0.md for detailed ns-3 installation steps
 
-### Future: Main Simulation (Phases 1+)
+**Note:** Original plan references Ninja (`-G Ninja`), but standard Unix Makefiles work fine if Ninja is not installed.
 
-Once the full sim/ harness is built:
+### Phase 1: Calibration Harness (Current)
+
+Build and run the PHY calibration modes:
 
 ```bash
-# Calibration (Phase 1)
-./ns3 run "scratch/wpan_capture_sim --mode=calibrate --out=out/calibration --betaDb=7 --captureDb=6"
+# Build
+cd sim
+mkdir -p build && cd build
+cmake -DCMAKE_PREFIX_PATH="$HOME/opt/ns3" ..
+make -j$(nproc)
 
+# PER vs SINR sweep
+./wpan-capture-sim --mode=per-sinr-sweep --betaDb=7 --txPowerDbm=0 \
+  --noiseFigureDb=10 --bandwidthHz=2000000 --out=../../out/calibration
+
+# Capture margin test
+./wpan-capture-sim --mode=capture-test --captureDb=6 --betaDb=7 \
+  --txPowerDbm=0 --noiseFigureDb=10 --bandwidthHz=2000000 --out=../../out/calibration
+
+# Generate plots
+python3 ../../scripts/plot_recipes.py per ../../out/calibration/per_vs_sinr.csv ../../out/calibration/per_vs_sinr.png
+python3 ../../scripts/plot_recipes.py cap ../../out/calibration/capture_toggle.csv ../../out/calibration/capture_toggle.png
+```
+
+### Future: Experiment Matrix (Phases 2+)
+
+Once controllers and full harness are implemented:
+
+```bash
 # Experiment matrix (Phase 7)
 scripts/run_matrix.sh --matrix configs/matrix_rho.yaml --out out/matrix
 
@@ -217,6 +248,85 @@ YAML configs (configs/*.yaml):
 | 12 | Variants & Ablations | Robustness studies (optional) |
 
 See **plan/PHASES.md** for detailed phase definitions.
+
+## Current Status & Known Issues
+
+### Phase 1: PHY Calibration (Partial Completion)
+
+**Completed:**
+- ✅ Full infrastructure: CMake build, calibration harness, plotting utilities
+- ✅ Two calibration modes functional (per-sinr-sweep, capture-test)
+- ✅ CSV and PNG outputs generated
+- ✅ IPv6/UDP Echo working over 6LoWPAN
+
+**Known Issues:**
+
+1. **ns-3 LrWpanPhy Transmit Power API Mismatch**
+   - Issue: Plan assumes `SetTransmitPower(dBm)` or `SetAttribute("TxPower", DoubleValue)` exist
+   - Reality: `LrWpanPhy` uses spectral density, not direct dBm control
+   - Current workaround: Using default transmit power (results in high SINR ~22-38 dB)
+   - Impact: Cannot observe PER "knee" near beta threshold; all PER values = 0
+   - Location: `sim/wpan_capture_sim.cc:93-95` (commented out), `sim/wpan_capture_sim.cc:219-220` (commented out)
+
+2. **Low Packet Transmission Count**
+   - Issue: Only ~6 packets transmitted per test instead of configured 400
+   - Possible causes: UDP Echo timing, neighbor discovery delays, simulation duration
+   - Impact: Insufficient samples for statistical PER measurement
+   - Affected: Both per-sinr-sweep and capture-test modes
+
+3. **SINR Values Too High for Distance Range**
+   - Issue: Tested distances (6-20m) produce SINR of 22-38 dB with default power
+   - Expected: SINR range near beta threshold (~7 dB) to observe PER variation
+   - Workaround options:
+     - Use much larger distances (100-500m)
+     - Adjust propagation model parameters (referenceLossDb, exponent)
+     - Implement proper transmit power control (requires ns-3 API research)
+
+**See plan/PHASE_1_RESULTS.md for detailed analysis and recommendations.**
+
+### Build System Notes
+
+- **CMake Generator:** Plan documents reference Ninja, but Unix Makefiles work fine
+  - Use `-G Ninja` if Ninja is installed
+  - Otherwise, omit `-G` flag and cmake will use Unix Makefiles by default
+
+- **IPv6 Routing:** Must use actual assigned IPv6 addresses from `Ipv6InterfaceContainer::GetAddress(index, 1)` instead of hardcoded addresses like `2001:db8:calib::2`
+
+- **ns-3 API Differences:**
+  - Use `SetAttribute()` not `GetAttribute()` to set PHY parameters
+  - `SetDefaultRouteInAllNodes()` must be called after `SetForwarding()` for proper IPv6 routing
+
+## Troubleshooting
+
+### Build Errors
+
+**"CMake was unable to find a build program corresponding to Ninja"**
+- Solution: Omit `-G Ninja` flag, use default Unix Makefiles generator
+- Or install Ninja: `sudo apt-get install ninja-build`
+
+**"CMAKE_CXX_COMPILER not set"**
+- Solution: Install build tools: `sudo apt-get install build-essential cmake g++`
+
+**"cannot bind non-const lvalue reference"**
+- Cause: Using `GetAttribute()` instead of `SetAttribute()`
+- Solution: Change to `SetAttribute()`
+
+### Runtime Errors
+
+**"Attribute name=TxPower does not exist"**
+- Cause: `LrWpanPhy` doesn't have a `TxPower` attribute
+- Current workaround: Comment out power setting, rely on defaults
+- Future: Research correct API (likely `SetTxPowerSpectralDensity()`)
+
+**"Can not find an outgoing interface for a packet"**
+- Cause: IPv6 routing not properly configured
+- Solution: Ensure `SetForwarding(true)` and `SetDefaultRouteInAllNodes()` called on all interfaces
+- Solution: Use actual assigned IPv6 addresses, not hardcoded ones
+
+**Only 6 packets sent instead of 400**
+- Cause: Application stop time too early, or neighbor discovery consuming time
+- Workaround: Increase simulation duration
+- Investigation needed: Add logging to understand MAC/app behavior
 
 ## Notes for Future Developers
 
