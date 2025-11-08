@@ -5,6 +5,7 @@ Plot utils for ring6_sweep_results.csv.
 
 import argparse
 import csv
+import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -93,6 +94,17 @@ def plot_metric(rows, metric, out_path, group_by, confidence_style):
                 plt.fill_between(xs, lower, upper, color=color, alpha=0.2)
             elif confidence_style == "errorbar":
                 plt.errorbar(xs, ys, yerr=stds, fmt="none", ecolor=color, alpha=0.6)
+
+    if metric == "wasteTx":
+        xs_limit = sorted({row.get("Tinfo", 0.0) for row in rows})
+        ys_limit = [1133.0 * (1.0 - math.exp(-0.5 * (x / 2.5))) for x in xs_limit]
+        if xs_limit:
+            plt.plot(xs_limit,
+                     ys_limit,
+                     linestyle="--",
+                     color="black",
+                     linewidth=1.2,
+                     label="TooSlowToKnow Limit")
 
     plt.xlabel("Tinfo (s)")
     plt.ylabel(metric)

@@ -93,6 +93,18 @@ Additional CLI options help when working with the averaged/randomized datasets:
 - `--group-by <column>` (default `mode`) splits each line/marker; try `--group-by badArc` when plotting the combined multi-arc CSV.
 - `--filter COL=VALUE` (repeatable) slices the CSV before plotting, e.g. `--filter badArc=3,4`.
 - `--confidence-style {band,errorbar,none}` controls how `*Std` columns are rendered; the default fills a confidence band around each series to visualize ±σ.
+- WasteTx plots automatically overlay the “TooSlowToKnow Limit” curve  
+  `1133 · [1 − exp(-0.5 · (Tinfo / 2.5))]` so you can compare controller waste directly against the theoretical bound.
+
+## Makefile Shortcuts
+
+Common randomized studies can be kicked off via `make`:
+
+- `make random_tinfo_avg` – run the 600 s, 5 k-packet randomized Tinfo sweep (arc 4→5, five trials, `rng-run-start=101`), producing `sweeps/random_tinfo_avg/ring6_random_tinfo_avg.csv`.
+- `make random_multiarc_avg` – run the four 600 s multi-arc sweeps (arcs 1→2, 0→1, 3→4, 5→0 with seeds 201/301/401/501) and merge them into `sweeps/random_multiarc_avg/ring6_random_multiarc_avg.csv`.
+- `make plots` – regenerate the confidence-band figures for both datasets (requires the CSVs above).
+
+Run `make help` to see the available targets.
 
 ## Published Averaged Datasets
 
@@ -105,18 +117,30 @@ Additional CLI options help when working with the averaged/randomized datasets:
     --tinfo 0 0.5 1 2 4 8 12 16 24 32 \
     --bad-arc 4,5 \
     --fault-mode random --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
-    --sim-time 180 --count 300 --rate 10 --buffer 1 \
+    --sim-time 600 --count 5000 --rate 10 --buffer 1 \
     --trials 5 --rng-run-start 101 \
     --csv sweeps/random_tinfo_avg/ring6_random_tinfo_avg.csv
   ```
-  The CSV now carries `*Std` columns for every metric, so plotting libraries can draw confidence bands directly from e.g., `deliveredStd` vs `Tinfo`.
+  The longer `simTime`/`count` combination reduces stochastic variance (e.g., Global’s delivered std dev drops to ~11 packets at `Tinfo=0.5`, ~35 at `Tinfo=2`) while Local stays at 5000 deliveries with effectively zero spread. Use the `*Std` columns to draw confidence bands directly from the CSV.
 - **Multiple bad arcs:** `sweeps/random_multiarc_avg/ring6_random_multiarc_avg.csv` concatenates four per-arc sweeps (`1→2`, `0→1`, `3→4`, `5→0`) each captured with the same randomized fault model, `Tinfo ∈ {0, 2, 4, 8, 16}`, and five trials. Individual logs live under `sweeps/random_multiarc_avg/<arc>/`. Use the same command template as above while swapping `--bad-arc` and `--rng-run-start`; the combined CSV keeps the `badArc` column so downstream tooling can split traces per fault location.
+  ```bash
+  ./ring6_sweep.py --ns3-dir references/ns-3-dev \
+    --log-dir sweeps/random_multiarc_avg/arcXY \
+    --modes global local \
+    --tinfo 0 2 4 8 16 \
+    --bad-arc X,Y \
+    --fault-mode random --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
+    --sim-time 600 --count 5000 --rate 10 --buffer 1 \
+    --trials 5 --rng-run-start <seed> \
+    --csv sweeps/random_multiarc_avg/ring6_random_arcXY_avg.csv
+  ```
+  (Run once each for arcs 1→2, 0→1, 3→4, 5→0 with seeds 201/301/401/501, then concatenate into `ring6_random_multiarc_avg.csv`.) The extended runs shrink the confidence regions and better expose steady-state behaviors (e.g., Global averages ≈4.6 k deliveries vs the TooSlowToKnow limit at high `Tinfo`, while Local stays at 5 k except when the sink ingress is blocked).
 
 Key takeaways visible in these datasets:
 
-- Snapshot-Global collapses once `Tinfo` exceeds the mean fault interval (delivered average drops to ~238 ± 41 packets at `Tinfo ≥ 16`), while Local stays pegged at 300 deliveries with zero waste for the same random outages.
-- When the blocked arc sits on the only clockwise path (e.g., `3→4`), Local maintains full delivery through the counter-clockwise detour whereas Global’s waste climbs linearly with `Tinfo`.
-- Blocking the sink’s ingress (`5→0`) harms both controllers because neither has an alternate hop; the averaged CSV still quantifies the shared collapse (≈228 ± 34 deliveries, ≈72 TTL drops) and enables you to visualize overlapping confidence bands.
+- Snapshot-Global now averages ≈4.9 k deliveries at `Tinfo ≤ 1` but slumps to ≈3.0–3.8 k once `Tinfo ≥ 12`, while Local remains pegged at 5000 deliveries with zero waste throughout the 600 s randomized runs.
+- On the critical arc `3→4`, Local continues to reroute counter-clockwise (5000 deliveries every time) whereas Global ranges from ≈3.0 k (no snapshots) to ≈4.7 k (tight snapshots) with narrow ±σ bands thanks to the longer simulations.
+- Blocking the sink ingress (`5→0`) still hurts both controllers equally: the averaged CSV shows ≈3.1 k deliveries with ±0.3 k spread for every `Tinfo`, so the plots’ confidence bands overlap completely and highlight the lack of any viable alternate route.
 
 ## Metrics & Logging
 
