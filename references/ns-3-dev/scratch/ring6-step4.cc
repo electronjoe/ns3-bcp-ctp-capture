@@ -13,20 +13,24 @@
  */
 #include "ns3/constant-position-mobility-model.h"
 #include "ns3/core-module.h"
+#include "ns3/double.h"
 #include "ns3/header.h"
 #include "ns3/log.h"
 #include "ns3/lr-wpan-module.h"
 #include "ns3/node-container.h"
 #include "ns3/propagation-delay-model.h"
 #include "ns3/propagation-loss-model.h"
+#include "ns3/random-variable-stream.h"
 #include "ns3/simulator.h"
 #include "ns3/single-model-spectrum-channel.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <deque>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -235,11 +239,17 @@ struct RingConfig
     uint8_t ttl{kNumNodes};
     double snapshotPeriod{0.0}; // seconds, 0 disables periodic snapshots
     uint32_t bufferCapacity{5};
+    double simTime{0.0};
     bool hasFault{false};
     uint16_t faultFrom{0};
     uint16_t faultTo{0};
     double faultOn{0.0};
     double faultOff{0.0};
+    bool randomFaults{false};
+    double randomFaultOnMean{5.0};
+    double randomFaultOffMean{5.0};
+    double randomFaultStart{0.0};
+    int64_t randomFaultStream{1};
 };
 
 struct Metrics
@@ -302,6 +312,7 @@ static void SendToNeighbor(ForwarderContext* ctx,
                            uint16_t neighborIndex,
                            Ptr<Packet> packet,
                            uint32_t sequence);
+static void GenerateRandomFaultWindows(ForwarderContext* ctx, double startTime, double simStop);
 static void ReportStats(const ForwarderContext* ctx, const std::string& modeStr);
 static void ReportStats(const ForwarderContext* ctx, const std::string& modeStr);
 
@@ -581,6 +592,57 @@ SendToNeighbor(ForwarderContext* ctx,
 }
 
 static void
+GenerateRandomFaultWindows(ForwarderContext* ctx, double startTime, double simStop)
+{
+    if (!ctx->config->randomFaults || !ctx->config->hasFault)
+    {
+        return;
+    }
+
+    double begin = std::max(0.0, startTime);
+    if (simStop <= begin)
+    {
+        return;
+    }
+
+    Ptr<ExponentialRandomVariable> onRv = CreateObject<ExponentialRandomVariable>();
+    onRv->SetAttribute("Mean", DoubleValue(ctx->config->randomFaultOnMean));
+    onRv->SetStream(ctx->config->randomFaultStream);
+
+    Ptr<ExponentialRandomVariable> offRv = CreateObject<ExponentialRandomVariable>();
+    offRv->SetAttribute("Mean", DoubleValue(ctx->config->randomFaultOffMean));
+    offRv->SetStream(ctx->config->randomFaultStream + 1);
+
+    double cursor = begin;
+    while (cursor < simStop)
+    {
+        double offDuration = offRv->GetValue();
+        if (offDuration < 0.0)
+        {
+            offDuration = 0.0;
+        }
+        cursor += offDuration;
+        if (cursor >= simStop)
+        {
+            break;
+        }
+
+        double onDuration = onRv->GetValue();
+        if (onDuration <= 0.0)
+        {
+            onDuration = std::numeric_limits<double>::epsilon();
+        }
+        double start = cursor;
+        double stop = std::min(simStop, start + onDuration);
+        if (stop > start)
+        {
+            ctx->faults.emplace_back(ctx->config->faultFrom, ctx->config->faultTo, start, stop);
+        }
+        cursor = stop;
+    }
+}
+
+static void
 ScheduleSnapshotRefresh(ForwarderContext* ctx, double period)
 {
     InstallSnapshotParents(ctx);
@@ -711,6 +773,7 @@ main(int argc, char* argv[])
     RingConfig config;
     std::string modeStr = "global";
     std::string badArcStr;
+    std::string faultModeStr = "fixed";
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("verbose", "turn on all log components", verbose);
@@ -723,13 +786,42 @@ main(int argc, char* argv[])
     cmd.AddValue("ttl", "initial TTL carried in RingHeader", config.ttl);
     cmd.AddValue("mode", "controller mode: global or local", modeStr);
     cmd.AddValue("Tinfo", "snapshot period (seconds) for global mode; 0 disables", config.snapshotPeriod);
+    cmd.AddValue("simTime", "total simulation time (seconds); 0 uses auto stop", config.simTime);
     cmd.AddValue("B", "per-node buffer capacity (packets)", config.bufferCapacity);
+    cmd.AddValue("faultMode", "fault scheduling mode: fixed or random", faultModeStr);
     cmd.AddValue("badArc",
                  "directed link to block during window, format i,j (optional)",
                  badArcStr);
     cmd.AddValue("badOn", "fault start time (seconds)", config.faultOn);
     cmd.AddValue("badOff", "fault end time (seconds)", config.faultOff);
+    cmd.AddValue("faultOnMean",
+                 "mean duration (seconds) of blocked window when faultMode=random",
+                 config.randomFaultOnMean);
+    cmd.AddValue("faultOffMean",
+                 "mean duration (seconds) of healthy window when faultMode=random",
+                 config.randomFaultOffMean);
+    cmd.AddValue("faultStart", "time to begin randomized fault toggling", config.randomFaultStart);
+    cmd.AddValue("faultStream",
+                 "RNG stream index used for randomized fault durations",
+                 config.randomFaultStream);
     cmd.Parse(argc, argv);
+
+    if (faultModeStr == "fixed")
+    {
+        config.randomFaults = false;
+    }
+    else if (faultModeStr == "random")
+    {
+        config.randomFaults = true;
+    }
+    else
+    {
+        NS_ABORT_MSG("Unsupported faultMode '" << faultModeStr << "'. Use fixed or random.");
+    }
+
+    NS_ABORT_MSG_IF(config.simTime < 0.0, "simTime must be >= 0");
+    NS_ABORT_MSG_IF(config.randomFaultStart < 0.0, "faultStart must be >= 0");
+    NS_ABORT_MSG_IF(config.randomFaultStream < 0, "faultStream must be >= 0");
 
     if (verbose)
     {
@@ -755,12 +847,39 @@ main(int argc, char* argv[])
         NS_ABORT_MSG_IF(comma != ',', "badArc must be formatted as i,j");
         NS_ABORT_MSG_IF(from >= kNumNodes || to >= kNumNodes, "badArc nodes must be within ring");
         NS_ABORT_MSG_IF(from == to, "badArc requires distinct endpoints");
-        NS_ABORT_MSG_IF(config.faultOff <= config.faultOn,
-                        "badOff must be greater than badOn");
         config.hasFault = true;
         config.faultFrom = from;
         config.faultTo = to;
     }
+
+    if (config.hasFault)
+    {
+        if (config.randomFaults)
+        {
+            NS_ABORT_MSG_IF(config.randomFaultOnMean <= 0.0,
+                            "faultOnMean must be greater than zero for random faults");
+            NS_ABORT_MSG_IF(config.randomFaultOffMean <= 0.0,
+                            "faultOffMean must be greater than zero for random faults");
+        }
+        else
+        {
+            NS_ABORT_MSG_IF(config.faultOff <= config.faultOn,
+                            "badOff must be greater than badOn for fixed faults");
+        }
+    }
+    else
+    {
+        NS_ABORT_MSG_IF(config.randomFaults, "faultMode=random requires --badArc");
+    }
+
+    double trafficWindow = 0.0;
+    if (config.packetCount > 0 && config.ratePps > 0)
+    {
+        trafficWindow = static_cast<double>(config.packetCount - 1) / config.ratePps;
+    }
+    double defaultSimStop = kTrafficStart + trafficWindow + 5.0;
+    double simStop = (config.simTime > 0.0) ? config.simTime : defaultSimStop;
+    simStop = std::max(simStop, kTrafficStart + 1.0);
 
     NodeContainer nodes;
     nodes.Create(kNumNodes);
@@ -797,7 +916,14 @@ main(int argc, char* argv[])
 
     if (config.hasFault)
     {
-        ctx.faults.emplace_back(config.faultFrom, config.faultTo, config.faultOn, config.faultOff);
+        if (config.randomFaults)
+        {
+            GenerateRandomFaultWindows(&ctx, config.randomFaultStart, simStop);
+        }
+        else
+        {
+            ctx.faults.emplace_back(config.faultFrom, config.faultTo, config.faultOn, config.faultOff);
+        }
     }
 
     for (uint16_t i = 0; i < kNumNodes; ++i)
@@ -846,12 +972,7 @@ main(int argc, char* argv[])
                             interval);
     }
 
-    double trafficWindow = 0.0;
-    if (config.packetCount > 0 && config.ratePps > 0)
-    {
-        trafficWindow = static_cast<double>(config.packetCount - 1) / config.ratePps;
-    }
-    Simulator::Stop(Seconds(kTrafficStart + trafficWindow + 5.0));
+    Simulator::Stop(Seconds(simStop));
     Simulator::Run();
     Simulator::Destroy();
 

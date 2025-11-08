@@ -166,6 +166,8 @@ _Implementation note:_ `InstallSnapshotParents` keeps clockwise parents by defau
 
 _Implementation note:_ Each node now owns a bounded software queue (configurable via `--B`) that must accept packets before they reach `McpsDataRequest`. The run logs `TX/DROP/DELIVERED` events per sequence ID and tracks `queueDrops` (admission failures) plus `wasteTx` (all transmissions spent on packets that eventually drop). These new counters flow through the `RESULT` line, sweep CSV, and Matplotlib plots.
 
+_Randomized faults & longer runs:_ `--simTime` keeps the simulator alive beyond the default `count/rate` window, and `--faultMode=random` repeatedly toggles the blocked arc using exponential ON/OFF samples (`--faultOnMean`, `--faultOffMean`, optional `--faultStart`, `--faultStream`). Pair these knobs with higher `--count/--rate` to gather averaged behavior over many fault epochs.
+
 ---
 
 ## Command-line flags to add (quality-of-life)
@@ -175,6 +177,9 @@ _Implementation note:_ Each node now owns a bounded software queue (configurable
 --badArc=2,3
 --badOn=20 --badOff=60
 --Tinfo=60
+--faultMode=fixed|random
+--faultOnMean=5 --faultOffMean=5
+--faultStart=10 --faultStream=1
 --B=20
 --rate=5pps
 --simTime=180
