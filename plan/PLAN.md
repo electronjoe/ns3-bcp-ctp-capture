@@ -166,7 +166,7 @@ _Implementation note:_ `InstallSnapshotParents` keeps clockwise parents by defau
 
 _Implementation note:_ Each node now owns a bounded software queue (configurable via `--B`) that must accept packets before they reach `McpsDataRequest`. The run logs `TX/DROP/DELIVERED` events per sequence ID and tracks `queueDrops` (admission failures) plus `wasteTx` (all transmissions spent on packets that eventually drop). These new counters flow through the `RESULT` line, sweep CSV, and Matplotlib plots.
 
-_Randomized faults & longer runs:_ `--simTime` keeps the simulator alive beyond the default `count/rate` window, and `--faultMode=random` repeatedly toggles the blocked arc using exponential ON/OFF samples (`--faultOnMean`, `--faultOffMean`, optional `--faultStart`, `--faultStream`). Pair these knobs with higher `--count/--rate` to gather averaged behavior over many fault epochs.
+_Randomized faults & longer runs:_ `--simTime` keeps the simulator alive beyond the default `count/rate` window, and the exponential outage knobs (`--faultOnMean`, `--faultOffMean`, optional `--faultStart`) repeatedly toggle the blocked arc without editing code. Pair these with higher `--count/--rate` to gather averaged behavior over many fault epochs.
 
 _Averaged datasets now published (long-form runs to shrink variance):_
 
@@ -180,11 +180,8 @@ _Averaged datasets now published (long-form runs to shrink variance):_
 ```
 --mode=global|local
 --badArc=2,3
---badOn=20 --badOff=60
 --Tinfo=60
---faultMode=fixed|random
---faultOnMean=5 --faultOffMean=5
---faultStart=10 --faultStream=1
+--faultOnMean=5 --faultOffMean=5 --faultStart=10
 --B=20
 --rate=5pps
 --simTime=180
@@ -221,15 +218,15 @@ _Averaged datasets now published (long-form runs to shrink variance):_
   Tests: `./ns3 build scratch/ring6-step3`, `./build/scratch/ns3.46.1-ring6-step3-default`.
 - **M4 (Done):** `scratch/ring6-step4.cc` introduces Global vs Local controllers plus metrics/sweep tooling.  
   Tests: `./ns3 build scratch/ring6-step4`, `./build/scratch/ns3.46.1-ring6-step4-default --mode=global`, `--mode=local`, and automation via  
-  `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --bad-on 2 --bad-off 8 --count 3 --rate 2`.
-- **M5 (Done):** Directed fault windows (`--badArc/badOn/badOff`) plus RESULT counters differentiate behaviors (global blocked vs local reroute).  
-  Tests: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1` and  
-  `./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`.  
+  `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --fault-on-mean 4 --fault-off-mean 8 --fault-start 10 --count 3 --rate 2`.
+- **M5 (Done):** Randomized software blocking (`--badArc` + `--faultOnMean/OffMean`) plus RESULT counters differentiate behaviors (global blocked vs local reroute).  
+  Tests: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --faultOnMean=4 --faultOffMean=8 --faultStart=10 --simTime=120 --count=600 --rate=5` and  
+  `./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --faultOnMean=4 --faultOffMean=8 --faultStart=10 --simTime=120 --count=600 --rate=5`.  
   Visualization: `python3 plot_sweep.py --csv sweeps/ring6_sweep_results.csv --out-dir sweeps/plots`.
-- **M6 (Done):** Enhanced `InstallSnapshotParents` so snapshots prefer clockwise routes but fall back to counter-clockwise when the current window blocks any hop to the sink. Swept `Tinfo ∈ {0, 0.5, 1, 2, 4, 8}` with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1`. Global now recovers as soon as a snapshot fires during the fault window (0.5–2 s) and degrades back to 1 delivery when `Tinfo` stretches beyond the outage (4 s, 8 s). CSV + plots refreshed under `sweeps/`.
-- **M7 (Done):** Added per-node buffers (`--B`) plus TX/DROP logging and new metrics (`queueDrops`, `wasteTx`). Validated with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1 --buffer 2` and refreshed plots for delivered/blocked/queueDrops/wasteTx.
+- **M6 (Done):** Enhanced `InstallSnapshotParents` so snapshots prefer clockwise routes but fall back to counter-clockwise when the current window blocks any hop to the sink. Swept `Tinfo ∈ {0, 0.5, 1, 2, 4, 8}` with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --fault-on-mean 4 --fault-off-mean 8 --fault-start 10 --count 6 --rate 1`. Global now recovers as soon as a snapshot fires during the fault window (0.5–2 s) and degrades back to 1 delivery when `Tinfo` stretches beyond the outage (4 s, 8 s). CSV + plots refreshed under `sweeps/`.
+- **M7 (Done):** Added per-node buffers (`--B`) plus TX/DROP logging and new metrics (`queueDrops`, `wasteTx`). Validated with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --fault-on-mean 4 --fault-off-mean 8 --fault-start 10 --count 6 --rate 1 --buffer 2` and refreshed plots for delivered/blocked/queueDrops/wasteTx.
 - Extended sweeps to randomized-fault studies:  
-  `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps/random_tinfo_avg --modes global local --tinfo 0 0.5 1 2 4 8 12 16 24 32 --bad-arc 4,5 --fault-mode random --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 --sim-time 600 --count 5000 --rate 10 --buffer 1 --trials 5 --rng-run-start 101 --csv sweeps/random_tinfo_avg/ring6_random_tinfo_avg.csv` (confidence-band plots under `sweeps/random_tinfo_avg/plots/`) and the four multi-arc suites under `sweeps/random_multiarc_avg/` (one command per arc, same parameters, RNG seeds 201/301/401/501). These CSVs record per-metric means/stddevs for documentation-ready charts with tight ±σ bands.
+  `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps/random_tinfo_avg --modes global local --tinfo 0 0.5 1 2 4 8 12 16 24 32 --bad-arc 4,5 --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 --sim-time 600 --count 5000 --rate 10 --buffer 1 --trials 5 --rng-run-start 101 --csv sweeps/random_tinfo_avg/ring6_random_tinfo_avg.csv` (confidence-band plots under `sweeps/random_tinfo_avg/plots/`) and the four multi-arc suites under `sweeps/random_multiarc_avg/` (one command per arc, same parameters, RNG seeds 201/301/401/501). These CSVs record per-metric means/stddevs for documentation-ready charts with tight ±σ bands.
 
 ---
 

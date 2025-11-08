@@ -243,9 +243,6 @@ struct RingConfig
     bool hasFault{false};
     uint16_t faultFrom{0};
     uint16_t faultTo{0};
-    double faultOn{0.0};
-    double faultOff{0.0};
-    bool randomFaults{false};
     double randomFaultOnMean{5.0};
     double randomFaultOffMean{5.0};
     double randomFaultStart{0.0};
@@ -594,7 +591,7 @@ SendToNeighbor(ForwarderContext* ctx,
 static void
 GenerateRandomFaultWindows(ForwarderContext* ctx, double startTime, double simStop)
 {
-    if (!ctx->config->randomFaults || !ctx->config->hasFault)
+    if (!ctx->config->hasFault)
     {
         return;
     }
@@ -769,31 +766,22 @@ int
 main(int argc, char* argv[])
 {
     bool verbose = false;
-    double radius = kDefaultRingRadius;
+    const double radius = kDefaultRingRadius;
     RingConfig config;
     std::string modeStr = "global";
     std::string badArcStr;
-    std::string faultModeStr = "fixed";
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("verbose", "turn on all log components", verbose);
-    cmd.AddValue("radius", "ring radius in meters", radius);
-    cmd.AddValue("source", "source node index (0-5)", config.sourceId);
-    cmd.AddValue("sink", "sink node index (0-5)", config.sinkId);
     cmd.AddValue("rate", "source packet rate (packets per second)", config.ratePps);
     cmd.AddValue("count", "number of application packets to send", config.packetCount);
-    cmd.AddValue("payload", "application payload size in bytes", config.payloadBytes);
-    cmd.AddValue("ttl", "initial TTL carried in RingHeader", config.ttl);
     cmd.AddValue("mode", "controller mode: global or local", modeStr);
     cmd.AddValue("Tinfo", "snapshot period (seconds) for global mode; 0 disables", config.snapshotPeriod);
     cmd.AddValue("simTime", "total simulation time (seconds); 0 uses auto stop", config.simTime);
     cmd.AddValue("B", "per-node buffer capacity (packets)", config.bufferCapacity);
-    cmd.AddValue("faultMode", "fault scheduling mode: fixed or random", faultModeStr);
     cmd.AddValue("badArc",
                  "directed link to block during window, format i,j (optional)",
                  badArcStr);
-    cmd.AddValue("badOn", "fault start time (seconds)", config.faultOn);
-    cmd.AddValue("badOff", "fault end time (seconds)", config.faultOff);
     cmd.AddValue("faultOnMean",
                  "mean duration (seconds) of blocked window when faultMode=random",
                  config.randomFaultOnMean);
@@ -801,28 +789,10 @@ main(int argc, char* argv[])
                  "mean duration (seconds) of healthy window when faultMode=random",
                  config.randomFaultOffMean);
     cmd.AddValue("faultStart", "time to begin randomized fault toggling", config.randomFaultStart);
-    cmd.AddValue("faultStream",
-                 "RNG stream index used for randomized fault durations",
-                 config.randomFaultStream);
     cmd.Parse(argc, argv);
-
-    if (faultModeStr == "fixed")
-    {
-        config.randomFaults = false;
-    }
-    else if (faultModeStr == "random")
-    {
-        config.randomFaults = true;
-    }
-    else
-    {
-        NS_ABORT_MSG("Unsupported faultMode '" << faultModeStr << "'. Use fixed or random.");
-    }
 
     NS_ABORT_MSG_IF(config.simTime < 0.0, "simTime must be >= 0");
     NS_ABORT_MSG_IF(config.randomFaultStart < 0.0, "faultStart must be >= 0");
-    NS_ABORT_MSG_IF(config.randomFaultStream < 0, "faultStream must be >= 0");
-
     if (verbose)
     {
         LogComponentEnableAll(LogLevel(LOG_PREFIX_TIME | LOG_PREFIX_FUNC));
@@ -854,22 +824,11 @@ main(int argc, char* argv[])
 
     if (config.hasFault)
     {
-        if (config.randomFaults)
-        {
-            NS_ABORT_MSG_IF(config.randomFaultOnMean <= 0.0,
-                            "faultOnMean must be greater than zero for random faults");
-            NS_ABORT_MSG_IF(config.randomFaultOffMean <= 0.0,
-                            "faultOffMean must be greater than zero for random faults");
-        }
-        else
-        {
-            NS_ABORT_MSG_IF(config.faultOff <= config.faultOn,
-                            "badOff must be greater than badOn for fixed faults");
-        }
-    }
-    else
-    {
-        NS_ABORT_MSG_IF(config.randomFaults, "faultMode=random requires --badArc");
+        NS_ABORT_MSG_IF(config.randomFaultOnMean <= 0.0,
+                        "faultOnMean must be greater than zero");
+        NS_ABORT_MSG_IF(config.randomFaultOffMean <= 0.0,
+                        "faultOffMean must be greater than zero");
+        NS_ABORT_MSG_IF(config.randomFaultStream < 0, "faultStream must be >= 0");
     }
 
     double trafficWindow = 0.0;
@@ -916,14 +875,7 @@ main(int argc, char* argv[])
 
     if (config.hasFault)
     {
-        if (config.randomFaults)
-        {
-            GenerateRandomFaultWindows(&ctx, config.randomFaultStart, simStop);
-        }
-        else
-        {
-            ctx.faults.emplace_back(config.faultFrom, config.faultTo, config.faultOn, config.faultOff);
-        }
+        GenerateRandomFaultWindows(&ctx, config.randomFaultStart, simStop);
     }
 
     for (uint16_t i = 0; i < kNumNodes; ++i)

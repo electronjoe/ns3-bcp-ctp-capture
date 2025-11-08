@@ -8,13 +8,13 @@ TINFO_CSV    := $(TINFO_LOG)/ring6_random_tinfo_avg.csv
 TINFO_PLOTS  := $(TINFO_LOG)/plots
 TINFO_ARGS   := --ns3-dir $(NS3_DIR) --log-dir $(TINFO_LOG) --modes global local \
                 --tinfo 0 0.5 1 2 4 8 12 16 24 32 \
-                --bad-arc 4,5 --fault-mode random \
+                --bad-arc 4,5 \
                 --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
                 --sim-time 600 --count 5000 --rate 10 --buffer 1 --trials 5
 
 ARC_LOG_ROOT := sweeps/random_multiarc_avg
 ARC_ARGS     := --ns3-dir $(NS3_DIR) --modes global local --tinfo 0 2 4 8 16 \
-                --fault-mode random --fault-on-mean 4 --fault-off-mean 6 \
+                --fault-on-mean 4 --fault-off-mean 6 \
                 --fault-start 10 --sim-time 600 --count 5000 --rate 10 --buffer 1 \
                 --trials 5
 

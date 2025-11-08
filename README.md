@@ -36,9 +36,9 @@ cd references/ns-3-dev
 | M2 – six-node neighbor ring | `scratch/ring6-step2.cc` | `./ns3 build scratch/ring6-step2`<br>`./build/scratch/ns3.46.1-ring6-step2-default` |
 | M3 – clockwise forwarder | `scratch/ring6-step3.cc` | `./ns3 build scratch/ring6-step3`<br>`./build/scratch/ns3.46.1-ring6-step3-default` |
 | M4 – controller toggle + metrics | `scratch/ring6-step4.cc` | `./ns3 build scratch/ring6-step4`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=global`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local` |
-| M5 – software bad arc, sweeps | `scratch/ring6-step4.cc` | Fault demo: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`<br>Sweep: `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --bad-on 2 --bad-off 8 --count 3 --rate 2` |
-| M6 – snapshot epoch sweep | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1` |
-| M7 – finite buffers + waste/drops | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1 --buffer 2` |
+| M5 – software bad arc, sweeps | `scratch/ring6-step4.cc` | Fault demo: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --faultOnMean=4 --faultOffMean=8 --faultStart=10 --simTime=120 --count=600 --rate=5`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --faultOnMean=4 --faultOffMean=8 --faultStart=10 --simTime=120 --count=600 --rate=5`<br>Sweep: `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --fault-on-mean 4 --fault-off-mean 8 --fault-start 10 --count 3 --rate 2` |
+| M6 – snapshot epoch sweep | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --fault-on-mean 4 --fault-off-mean 8 --fault-start 10 --count 6 --rate 1` |
+| M7 – finite buffers + waste/drops | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --fault-on-mean 4 --fault-off-mean 8 --fault-start 10 --count 6 --rate 1 --buffer 2` |
 
 Each run now logs `TX`, `DROP`, and `DELIVERED` events per packet ID, and ends with `RESULT mode=… delivered=… ttlDrops=… noRouteDrops=… blockedTx=… queueDrops=… wasteTx=…` so automation can capture buffer drops and wasted transmissions. Use `--simTime=<seconds>` to keep the simulator running beyond the default `count/rate` window (e.g., for multi-minute studies).
 
@@ -52,12 +52,12 @@ Use `ring6_sweep.py` to sweep controller modes, snapshot cadences, and fault set
   --log-dir sweeps \
   --modes global local \
   --tinfo 0 0.5 1 2 4 8 \
-  --bad-arc 2,3 --bad-on 20 --bad-off 60 \
+  --bad-arc 2,3 --fault-on-mean 20 --fault-off-mean 60 --fault-start 0 \
   --buffer 2 \
   --rate 5 --count 10
 ```
 
-For long-running randomized outages, add `--sim-time` and switch to `--fault-mode random`:
+For long-running randomized outages, add `--sim-time` while setting the exponential outage parameters:
 
 ```bash
 ./ring6_sweep.py \
@@ -66,15 +66,14 @@ For long-running randomized outages, add `--sim-time` and switch to `--fault-mod
   --modes global local \
   --tinfo 2 4 6 8 \
   --bad-arc 4,5 \
-  --fault-mode random \
   --fault-on-mean 4 --fault-off-mean 8 \
-  --fault-start 10 --fault-stream 5 \
+  --fault-start 10 \
   --sim-time 180 \
   --rate 10 --count 200 --buffer 1 \
   --trials 5 --rng-run-start 1
 ```
 
-The script emits one log per case under `sweeps/` and writes `sweeps/ring6_sweep_results.csv`, which is ready for plotting (e.g., pandas/matplotlib). Use `--dry-run` to preview commands or `--csv <path>` to override the output location.
+The script emits one log per case under `sweeps/` and writes `sweeps/ring6_sweep_results.csv`, which is ready for plotting (e.g., pandas/matplotlib). Use `--csv <path>` to override the output location if needed.
 
 ## Visualizing Sweep Results
 
@@ -116,7 +115,7 @@ Run `make help` to see the available targets.
     --modes global local \
     --tinfo 0 0.5 1 2 4 8 12 16 24 32 \
     --bad-arc 4,5 \
-    --fault-mode random --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
+    --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
     --sim-time 600 --count 5000 --rate 10 --buffer 1 \
     --trials 5 --rng-run-start 101 \
     --csv sweeps/random_tinfo_avg/ring6_random_tinfo_avg.csv
@@ -129,7 +128,7 @@ Run `make help` to see the available targets.
     --modes global local \
     --tinfo 0 2 4 8 16 \
     --bad-arc X,Y \
-    --fault-mode random --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
+    --fault-on-mean 4 --fault-off-mean 6 --fault-start 10 \
     --sim-time 600 --count 5000 --rate 10 --buffer 1 \
     --trials 5 --rng-run-start <seed> \
     --csv sweeps/random_multiarc_avg/ring6_random_arcXY_avg.csv
@@ -150,20 +149,18 @@ Key takeaways visible in these datasets:
 - `queueDrops` counts packets refused because a node’s buffer (configured via `--B`/`--buffer`) was full.
 - `wasteTx` sums every `TX` for packets that eventually drop, making it easy to spot wasted airtime in Snapshot-Global runs.
 - Fault scheduling:
-  - `--faultMode=fixed` (default) reuses a single `--badOn/--badOff` window.
-  - `--faultMode=random` plus `--faultOnMean` / `--faultOffMean` (and optional `--faultStart`, `--faultStream`) repeatedly toggles the blocked arc using exponential ON/OFF durations until `simTime`. Pair with `--simTime` and higher `--count/--rate` to capture averaged behavior.
-- The sweep helper exposes `--sim-time`, `--fault-mode`, `--fault-on-mean`, `--fault-off-mean`, `--fault-start`, and `--fault-stream` so CSV rows record how you drove the randomized experiments.
+  - Randomized outages are the supported path: provide `--faultOnMean` / `--faultOffMean` (and optional `--faultStart`) whenever `--badArc` is set to block an arc using exponential ON/OFF durations until `simTime`. Omit `--badArc` to keep the ring healthy.
+- The sweep helper exposes `--sim-time`, `--fault-on-mean`, `--fault-off-mean`, and `--fault-start` so CSV rows record how you drove the randomized experiments.
 - Use `--trials N --rng-run-start M` to run each configuration multiple times (with incrementing `RngRun`/fault streams) and write mean/stddev columns for every metric, allowing easy comparison of averaged behaviors.
 
 ## Fault / Link-Outage Model
 
-- Deterministic outages: set `--bad-arc i,j` to block transmissions from node `i` to node `j` between `--bad-on` and `--bad-off`. This models a single scheduled fault window and is useful for plotting controller recovery vs snapshot cadence.
-- Probabilistic outages: switch to `--fault-mode random` to replace the single window with an alternating renewal process:
-  - `--fault-on-mean` and `--fault-off-mean` define exponential ON/OFF durations (mean seconds spent blocked vs healthy).
+- Set `--bad-arc i,j` to identify the directed edge you want to disrupt; omit the flag to keep the ring healthy.
+- Randomized outages use an alternating-renewal process:
+  - `--fault-on-mean` and `--fault-off-mean` define the exponential ON/OFF durations (mean seconds blocked vs healthy).
   - `--fault-start` delays the first random toggle (default 0 s).
-  - `--fault-stream` seeds the random draws; each trial bumps the stream so sweeps can average over independent schedules.
   - The simulator keeps drawing ON/OFF intervals until `--sim-time` elapses, so long runs see multiple outages per experiment.
-- Combining `--trials`, `--rng-run-start`, and the random fault mode yields CSV rows with both means and standard deviations, which `plot_sweep.py --confidence-style band` turns into visual confidence intervals.
+- Combine `--trials` with `--rng-run-start` to average over multiple seeds. The CSV picks up the mean/std columns automatically, and `plot_sweep.py --confidence-style band` turns them into visual confidence intervals.
 
 ## Logs & Artifacts
 
