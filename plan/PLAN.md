@@ -198,14 +198,22 @@ Set the bad-arc ON/OFF to define `T_dyn` (e.g., ON from 20–60 s → `T_dyn = 4
 
 ## Validation Checklist per Milestone
 
-- **M0:** example runs.  
-- **M1:** copied script compiles & runs.  
-- **M2:** 12 neighbor deliveries observed.  
-- **M3:** multi-hop path delivers from node 3→0 (5 hops).  
-- **M4:** `--mode` flag switches policies; behavior identical without faults.  
-- **M5:** with `(2→3)` blocked [20,60), Global’s goodput dips; Local’s stays high.  
-- **M6:** increasing `--Tinfo` increases Global’s outage duration (ρ effect).  
-- **M7:** waste & drops logged; Global shows spikes during bad-arc.
+- **M0 (Done):** ns-3-dev configured/built ahead of this plan (baseline `./ns3 build`).
+- **M1 (Done):** `scratch/ring6-step1.cc` cloned from `lr-wpan-data` and verified via  
+  Tests: `./ns3 build scratch/ring6-step1` and `./build/scratch/ns3.46.1-ring6-step1-default` (short + `--extended=1`).
+- **M2 (Done):** `scratch/ring6-step2.cc` builds the 6-node ring; logs show 12 neighbor deliveries.  
+  Tests: `./ns3 build scratch/ring6-step2`, `./build/scratch/ns3.46.1-ring6-step2-default`.
+- **M3 (Done):** `scratch/ring6-step3.cc` adds the clockwise forwarder and CLI knobs; packets traverse 3→0 through five hops.  
+  Tests: `./ns3 build scratch/ring6-step3`, `./build/scratch/ns3.46.1-ring6-step3-default`.
+- **M4 (Done):** `scratch/ring6-step4.cc` introduces Global vs Local controllers plus metrics/sweep tooling.  
+  Tests: `./ns3 build scratch/ring6-step4`, `./build/scratch/ns3.46.1-ring6-step4-default --mode=global`, `--mode=local`, and automation via  
+  `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --bad-on 2 --bad-off 8 --count 3 --rate 2`.
+- **M5 (Done):** Directed fault windows (`--badArc/badOn/badOff`) plus RESULT counters differentiate behaviors (global blocked vs local reroute).  
+  Tests: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1` and  
+  `./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`.  
+  Visualization: `python3 plot_sweep.py --csv sweeps/ring6_sweep_results.csv --out-dir sweeps/plots`.
+- **M6:** (Planned) increase `--Tinfo` to stretch outage duration; leverage `ring6_sweep.py` CSV output.
+- **M7:** (Planned) add finite buffers + waste/drop counters.
 
 ---
 

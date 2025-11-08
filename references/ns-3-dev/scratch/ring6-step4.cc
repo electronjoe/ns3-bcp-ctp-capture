@@ -25,6 +25,7 @@
 #include <array>
 #include <cmath>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -47,6 +48,13 @@ enum class ControllerMode
     LOCAL
 };
 
+enum class RouteDirection : uint8_t
+{
+    AUTO = 0,
+    CW = 1,
+    CCW = 2
+};
+
 class RingHeader : public Header
 {
   public:
@@ -65,17 +73,20 @@ class RingHeader : public Header
     void SetDst(uint8_t dst);
     void SetTtl(uint8_t ttl);
     void SetSequence(uint32_t sequence);
+    void SetDirection(RouteDirection dir);
 
     uint8_t GetSrc() const;
     uint8_t GetDst() const;
     uint8_t GetTtl() const;
     uint32_t GetSequence() const;
+    RouteDirection GetDirection() const;
 
   private:
     uint8_t m_src{0};
     uint8_t m_dst{0};
     uint8_t m_ttl{0};
     uint32_t m_sequence{0};
+    RouteDirection m_direction{RouteDirection::AUTO};
 };
 
 RingHeader::RingHeader() = default;
@@ -111,6 +122,7 @@ RingHeader::Serialize(Buffer::Iterator start) const
     start.WriteU8(m_dst);
     start.WriteU8(m_ttl);
     start.WriteHtonU32(m_sequence);
+    start.WriteU8(static_cast<uint8_t>(m_direction));
 }
 
 uint32_t
@@ -120,20 +132,22 @@ RingHeader::Deserialize(Buffer::Iterator start)
     m_dst = start.ReadU8();
     m_ttl = start.ReadU8();
     m_sequence = start.ReadNtohU32();
+    m_direction = static_cast<RouteDirection>(start.ReadU8());
     return GetSerializedSize();
 }
 
 uint32_t
 RingHeader::GetSerializedSize() const
 {
-    return 7;
+    return 8;
 }
 
 void
 RingHeader::Print(std::ostream& os) const
 {
     os << "src=" << static_cast<uint32_t>(m_src) << " dst=" << static_cast<uint32_t>(m_dst)
-       << " ttl=" << static_cast<uint32_t>(m_ttl) << " seq=" << m_sequence;
+       << " ttl=" << static_cast<uint32_t>(m_ttl) << " seq=" << m_sequence
+       << " dir=" << static_cast<uint32_t>(m_direction);
 }
 
 void
@@ -160,6 +174,12 @@ RingHeader::SetSequence(uint32_t sequence)
     m_sequence = sequence;
 }
 
+void
+RingHeader::SetDirection(RouteDirection dir)
+{
+    m_direction = dir;
+}
+
 uint8_t
 RingHeader::GetSrc() const
 {
@@ -184,6 +204,11 @@ RingHeader::GetSequence() const
     return m_sequence;
 }
 
+RouteDirection
+RingHeader::GetDirection() const
+{
+    return m_direction;
+}
 struct RingConfig
 {
     uint16_t sinkId{0};
@@ -200,6 +225,14 @@ struct RingConfig
     double faultOff{0.0};
 };
 
+struct Metrics
+{
+    uint32_t delivered{0};
+    uint32_t ttlDrops{0};
+    uint32_t noRouteDrops{0};
+    uint32_t blockedTransmissions{0};
+};
+
 struct ForwarderContext
 {
     std::array<Ptr<LrWpanNetDevice>, kNumNodes>* devices{nullptr};
@@ -210,6 +243,7 @@ struct ForwarderContext
     std::vector<std::tuple<uint16_t, uint16_t, double, double>> faults;
     uint8_t nextMsduHandle{0};
     uint32_t nextSequence{0};
+    Metrics metrics;
 };
 
 static uint16_t
@@ -227,8 +261,10 @@ CounterClockwiseNeighbor(uint16_t nodeIndex)
 static bool LinkAllowed(const ForwarderContext* ctx, uint16_t from, uint16_t to);
 static void InstallSnapshotParents(ForwarderContext* ctx);
 static void ScheduleSnapshotRefresh(ForwarderContext* ctx, double period);
-static uint16_t SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex);
+static uint16_t SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex, RingHeader* header);
 static void SendToNeighbor(ForwarderContext* ctx, uint16_t nodeIndex, uint16_t neighborIndex, Ptr<Packet> packet);
+static void ReportStats(const ForwarderContext* ctx, const std::string& modeStr);
+static void ReportStats(const ForwarderContext* ctx, const std::string& modeStr);
 
 static void
 DataConfirm(uint16_t nodeIndex, McpsDataConfirmParams params)
@@ -267,6 +303,7 @@ ForwardingIndication(ForwarderContext* ctx,
         if (nodeIndex == ctx->config->sinkId)
         {
             uint32_t hops = (ctx->config->ttl - header.GetTtl()) + 1;
+            ctx->metrics.delivered++;
             NS_LOG_UNCOND("DELIVERED seq=" << header.GetSequence() << " src="
                                            << static_cast<uint32_t>(header.GetSrc())
                                            << " hops=" << hops);
@@ -281,20 +318,22 @@ ForwardingIndication(ForwarderContext* ctx,
     uint8_t ttl = header.GetTtl();
     if (ttl <= 1)
     {
+        ctx->metrics.ttlDrops++;
         NS_LOG_UNCOND("Node " << nodeIndex << " dropping seq=" << header.GetSequence()
                               << " ttl exhausted");
         return;
     }
 
     header.SetTtl(ttl - 1);
-    packet->AddHeader(header);
-    uint16_t nextHop = SelectNextHop(ctx, nodeIndex);
+    uint16_t nextHop = SelectNextHop(ctx, nodeIndex, &header);
     if (nextHop == nodeIndex)
     {
+        ctx->metrics.noRouteDrops++;
         NS_LOG_UNCOND("Node " << nodeIndex << " has no available next hop for seq="
                               << header.GetSequence());
         return;
     }
+    packet->AddHeader(header);
     NS_LOG_UNCOND("Node " << nodeIndex << " forwarding seq=" << header.GetSequence()
                           << " -> " << nextHop << " ttl=" << static_cast<uint32_t>(header.GetTtl()));
     SendToNeighbor(ctx, nodeIndex, nextHop, packet);
@@ -305,6 +344,7 @@ SendToNeighbor(ForwarderContext* ctx, uint16_t nodeIndex, uint16_t neighborIndex
 {
     if (!LinkAllowed(ctx, nodeIndex, neighborIndex))
     {
+        ctx->metrics.blockedTransmissions++;
         NS_LOG_UNCOND("Node " << nodeIndex << " cannot send to neighbor " << neighborIndex
                               << " (blocked)");
         return;
@@ -380,17 +420,55 @@ ScheduleSnapshotRefresh(ForwarderContext* ctx, double period)
     }
 }
 
+static void
+ReportStats(const ForwarderContext* ctx, const std::string& modeStr)
+{
+    std::cout << "RESULT mode=" << modeStr << " delivered=" << ctx->metrics.delivered
+              << " ttlDrops=" << ctx->metrics.ttlDrops
+              << " noRouteDrops=" << ctx->metrics.noRouteDrops
+              << " blockedTx=" << ctx->metrics.blockedTransmissions << std::endl;
+}
+
 static uint16_t
-SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex)
+SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex, RingHeader* header)
 {
     if (nodeIndex == ctx->config->sinkId)
     {
         return nodeIndex;
     }
 
+    auto setDirIfUnset = [&](RouteDirection dir) {
+        if (header && header->GetDirection() == RouteDirection::AUTO)
+        {
+            header->SetDirection(dir);
+        }
+    };
+
     if (ctx->mode == ControllerMode::GLOBAL)
     {
-        return ctx->parent[nodeIndex];
+        uint16_t next = ctx->parent[nodeIndex];
+        if (header)
+        {
+            if (next == ClockwiseNeighbor(nodeIndex))
+            {
+                setDirIfUnset(RouteDirection::CW);
+            }
+            else if (next == CounterClockwiseNeighbor(nodeIndex))
+            {
+                setDirIfUnset(RouteDirection::CCW);
+            }
+        }
+        return next;
+    }
+
+    RouteDirection dir = header ? header->GetDirection() : RouteDirection::AUTO;
+    if (dir == RouteDirection::CW)
+    {
+        return ClockwiseNeighbor(nodeIndex);
+    }
+    if (dir == RouteDirection::CCW)
+    {
+        return CounterClockwiseNeighbor(nodeIndex);
     }
 
     uint16_t cw = ClockwiseNeighbor(nodeIndex);
@@ -399,17 +477,14 @@ SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex)
     bool cwOk = LinkAllowed(ctx, nodeIndex, cw);
     bool ccwOk = LinkAllowed(ctx, nodeIndex, ccw);
 
-    if (cwOk && !ccwOk)
+    if (cwOk)
     {
         return cw;
     }
-    if (ccwOk && !cwOk)
+    if (ccwOk)
     {
+        setDirIfUnset(RouteDirection::CCW);
         return ccw;
-    }
-    if (cwOk && ccwOk)
-    {
-        return cw;
     }
 
     return nodeIndex;
@@ -431,16 +506,17 @@ GenerateSourceTraffic(ForwarderContext* ctx,
                       config->sinkId,
                       config->ttl,
                       ctx->nextSequence++);
-    packet->AddHeader(header);
     NS_LOG_UNCOND("Source " << config->sourceId << " injecting seq=" << header.GetSequence());
-    uint16_t nextHop = SelectNextHop(ctx, config->sourceId);
+    uint16_t nextHop = SelectNextHop(ctx, config->sourceId, &header);
     if (nextHop == config->sourceId)
     {
         NS_LOG_UNCOND("Source " << config->sourceId << " has no available neighbor; dropping seq="
                                 << header.GetSequence());
+        ctx->metrics.noRouteDrops++;
     }
     else
     {
+        packet->AddHeader(header);
         SendToNeighbor(ctx, config->sourceId, nextHop, packet);
     }
 
@@ -604,6 +680,8 @@ main(int argc, char* argv[])
     Simulator::Stop(Seconds(kTrafficStart + trafficWindow + 5.0));
     Simulator::Run();
     Simulator::Destroy();
+
+    ReportStats(&ctx, modeStr);
 
     return 0;
 }

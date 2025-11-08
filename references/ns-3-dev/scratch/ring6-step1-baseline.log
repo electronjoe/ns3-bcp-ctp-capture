@@ -1,0 +1,30 @@
+phy0 state change at +0.000192s from TRX_OFF to RX_ON
+phy1 state change at +0.000192s from TRX_OFF to RX_ON
+phy0 state change at +0.002432s from RX_ON to TX_ON
+phy0 state change at +0.002432s from TX_ON to BUSY_TX
+phy1 state change at +0.00243203s from RX_ON to BUSY_RX
+phy0 state change at +0.004576s from BUSY_TX to TX_ON
+phy1 state change at +0.00457603s from BUSY_RX to RX_ON
+Received packet of size 50
+phy0 state change at +0.004768s from TX_ON to RX_ON
+phy1 state change at +0.00476803s from RX_ON to TX_ON
+phy1 state change at +0.00476803s from TX_ON to BUSY_TX
+phy0 state change at +0.00476807s from RX_ON to BUSY_RX
+phy1 state change at +0.00512003s from BUSY_TX to TX_ON
+phy0 state change at +0.00512007s from BUSY_RX to RX_ON
+LrWpanMcpsDataConfirmStatus = 0
+phy1 state change at +0.00531203s from TX_ON to RX_ON
+phy1 state change at +2.00192s from RX_ON to TX_ON
+phy1 state change at +2.00192s from TX_ON to BUSY_TX
+phy0 state change at +2.00192s from RX_ON to BUSY_RX
+phy1 state change at +2.00438s from BUSY_TX to TX_ON
+phy0 state change at +2.00438s from BUSY_RX to RX_ON
+Received packet of size 60
+phy1 state change at +2.00458s from TX_ON to RX_ON
+phy0 state change at +2.00458s from RX_ON to TX_ON
+phy0 state change at +2.00458s from TX_ON to BUSY_TX
+phy1 state change at +2.00458s from RX_ON to BUSY_RX
+phy0 state change at +2.00493s from BUSY_TX to TX_ON
+phy1 state change at +2.00493s from BUSY_RX to RX_ON
+LrWpanMcpsDataConfirmStatus = 0
+phy0 state change at +2.00512s from TX_ON to RX_ON

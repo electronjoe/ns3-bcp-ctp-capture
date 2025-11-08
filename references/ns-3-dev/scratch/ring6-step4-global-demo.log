@@ -1,0 +1,258 @@
+phy0 state change at +0.000192s from TRX_OFF to RX_ON
+phy1 state change at +0.000192s from TRX_OFF to RX_ON
+phy2 state change at +0.000192s from TRX_OFF to RX_ON
+phy3 state change at +0.000192s from TRX_OFF to RX_ON
+phy4 state change at +0.000192s from TRX_OFF to RX_ON
+phy5 state change at +0.000192s from TRX_OFF to RX_ON
+Source 3 injecting seq=0
+phy3 state change at +1.00096s from RX_ON to TX_ON
+phy3 state change at +1.00096s from TX_ON to BUSY_TX
+phy2 state change at +1.00096s from RX_ON to BUSY_RX
+phy4 state change at +1.00096s from RX_ON to BUSY_RX
+phy1 state change at +1.00096s from RX_ON to BUSY_RX
+phy5 state change at +1.00096s from RX_ON to BUSY_RX
+phy0 state change at +1.00096s from RX_ON to BUSY_RX
+phy3 state change at +1.00304s from BUSY_TX to TX_ON
+phy2 state change at +1.00304s from BUSY_RX to RX_ON
+phy4 state change at +1.00304s from BUSY_RX to RX_ON
+Node 4 forwarding seq=0 -> 5 ttl=5
+phy1 state change at +1.00304s from BUSY_RX to RX_ON
+phy5 state change at +1.00304s from BUSY_RX to RX_ON
+phy0 state change at +1.00304s from BUSY_RX to RX_ON
+phy3 state change at +1.00323s from TX_ON to RX_ON
+phy4 state change at +1.00323s from RX_ON to TX_ON
+phy4 state change at +1.00323s from TX_ON to BUSY_TX
+phy3 state change at +1.00323s from RX_ON to BUSY_RX
+phy5 state change at +1.00323s from RX_ON to BUSY_RX
+phy0 state change at +1.00323s from RX_ON to BUSY_RX
+phy2 state change at +1.00323s from RX_ON to BUSY_RX
+phy1 state change at +1.00323s from RX_ON to BUSY_RX
+phy4 state change at +1.00358s from BUSY_TX to TX_ON
+phy3 state change at +1.00358s from BUSY_RX to RX_ON
+Node 3 confirm status = 0
+phy5 state change at +1.00358s from BUSY_RX to RX_ON
+phy0 state change at +1.00358s from BUSY_RX to RX_ON
+phy2 state change at +1.00358s from BUSY_RX to RX_ON
+phy1 state change at +1.00358s from BUSY_RX to RX_ON
+phy4 state change at +1.00378s from TX_ON to RX_ON
+phy4 state change at +1.00602s from RX_ON to TX_ON
+phy4 state change at +1.00602s from TX_ON to BUSY_TX
+phy3 state change at +1.00602s from RX_ON to BUSY_RX
+phy5 state change at +1.00602s from RX_ON to BUSY_RX
+phy0 state change at +1.00602s from RX_ON to BUSY_RX
+phy2 state change at +1.00602s from RX_ON to BUSY_RX
+phy1 state change at +1.00602s from RX_ON to BUSY_RX
+phy4 state change at +1.0081s from BUSY_TX to TX_ON
+phy3 state change at +1.0081s from BUSY_RX to RX_ON
+phy5 state change at +1.0081s from BUSY_RX to RX_ON
+Node 5 forwarding seq=0 -> 0 ttl=4
+phy0 state change at +1.0081s from BUSY_RX to RX_ON
+phy2 state change at +1.0081s from BUSY_RX to RX_ON
+phy1 state change at +1.0081s from BUSY_RX to RX_ON
+phy4 state change at +1.00829s from TX_ON to RX_ON
+phy5 state change at +1.00829s from RX_ON to TX_ON
+phy5 state change at +1.00829s from TX_ON to BUSY_TX
+phy0 state change at +1.00829s from RX_ON to BUSY_RX
+phy4 state change at +1.00829s from RX_ON to BUSY_RX
+phy1 state change at +1.00829s from RX_ON to BUSY_RX
+phy3 state change at +1.00829s from RX_ON to BUSY_RX
+phy2 state change at +1.00829s from RX_ON to BUSY_RX
+phy5 state change at +1.00864s from BUSY_TX to TX_ON
+phy0 state change at +1.00864s from BUSY_RX to RX_ON
+phy4 state change at +1.00864s from BUSY_RX to RX_ON
+Node 4 confirm status = 0
+phy1 state change at +1.00864s from BUSY_RX to RX_ON
+phy3 state change at +1.00864s from BUSY_RX to RX_ON
+phy2 state change at +1.00864s from BUSY_RX to RX_ON
+phy5 state change at +1.00883s from TX_ON to RX_ON
+phy5 state change at +1.01139s from RX_ON to TX_ON
+phy5 state change at +1.01139s from TX_ON to BUSY_TX
+phy0 state change at +1.01139s from RX_ON to BUSY_RX
+phy4 state change at +1.01139s from RX_ON to BUSY_RX
+phy1 state change at +1.01139s from RX_ON to BUSY_RX
+phy3 state change at +1.01139s from RX_ON to BUSY_RX
+phy2 state change at +1.01139s from RX_ON to BUSY_RX
+phy5 state change at +1.01347s from BUSY_TX to TX_ON
+phy0 state change at +1.01347s from BUSY_RX to RX_ON
+DELIVERED seq=0 src=3 hops=3
+phy4 state change at +1.01347s from BUSY_RX to RX_ON
+phy1 state change at +1.01347s from BUSY_RX to RX_ON
+phy3 state change at +1.01347s from BUSY_RX to RX_ON
+phy2 state change at +1.01347s from BUSY_RX to RX_ON
+phy5 state change at +1.01366s from TX_ON to RX_ON
+phy0 state change at +1.01366s from RX_ON to TX_ON
+phy0 state change at +1.01366s from TX_ON to BUSY_TX
+phy1 state change at +1.01366s from RX_ON to BUSY_RX
+phy5 state change at +1.01366s from RX_ON to BUSY_RX
+phy2 state change at +1.01366s from RX_ON to BUSY_RX
+phy4 state change at +1.01366s from RX_ON to BUSY_RX
+phy3 state change at +1.01366s from RX_ON to BUSY_RX
+phy0 state change at +1.01402s from BUSY_TX to TX_ON
+phy1 state change at +1.01402s from BUSY_RX to RX_ON
+phy5 state change at +1.01402s from BUSY_RX to RX_ON
+Node 5 confirm status = 0
+phy2 state change at +1.01402s from BUSY_RX to RX_ON
+phy4 state change at +1.01402s from BUSY_RX to RX_ON
+phy3 state change at +1.01402s from BUSY_RX to RX_ON
+phy0 state change at +1.01421s from TX_ON to RX_ON
+Source 3 injecting seq=1
+phy3 state change at +2.00096s from RX_ON to TX_ON
+phy3 state change at +2.00096s from TX_ON to BUSY_TX
+phy2 state change at +2.00096s from RX_ON to BUSY_RX
+phy4 state change at +2.00096s from RX_ON to BUSY_RX
+phy1 state change at +2.00096s from RX_ON to BUSY_RX
+phy5 state change at +2.00096s from RX_ON to BUSY_RX
+phy0 state change at +2.00096s from RX_ON to BUSY_RX
+phy3 state change at +2.00304s from BUSY_TX to TX_ON
+phy2 state change at +2.00304s from BUSY_RX to RX_ON
+phy4 state change at +2.00304s from BUSY_RX to RX_ON
+Node 4 forwarding seq=1 -> 5 ttl=5
+Node 4 cannot send to neighbor 5 (blocked)
+phy1 state change at +2.00304s from BUSY_RX to RX_ON
+phy5 state change at +2.00304s from BUSY_RX to RX_ON
+phy0 state change at +2.00304s from BUSY_RX to RX_ON
+phy3 state change at +2.00323s from TX_ON to RX_ON
+phy4 state change at +2.00323s from RX_ON to TX_ON
+phy4 state change at +2.00323s from TX_ON to BUSY_TX
+phy3 state change at +2.00323s from RX_ON to BUSY_RX
+phy5 state change at +2.00323s from RX_ON to BUSY_RX
+phy0 state change at +2.00323s from RX_ON to BUSY_RX
+phy2 state change at +2.00323s from RX_ON to BUSY_RX
+phy1 state change at +2.00323s from RX_ON to BUSY_RX
+phy4 state change at +2.00358s from BUSY_TX to TX_ON
+phy3 state change at +2.00358s from BUSY_RX to RX_ON
+Node 3 confirm status = 0
+phy5 state change at +2.00358s from BUSY_RX to RX_ON
+phy0 state change at +2.00358s from BUSY_RX to RX_ON
+phy2 state change at +2.00358s from BUSY_RX to RX_ON
+phy1 state change at +2.00358s from BUSY_RX to RX_ON
+phy4 state change at +2.00378s from TX_ON to RX_ON
+Source 3 injecting seq=2
+phy3 state change at +3.00064s from RX_ON to TX_ON
+phy3 state change at +3.00064s from TX_ON to BUSY_TX
+phy2 state change at +3.00064s from RX_ON to BUSY_RX
+phy4 state change at +3.00064s from RX_ON to BUSY_RX
+phy1 state change at +3.00064s from RX_ON to BUSY_RX
+phy5 state change at +3.00064s from RX_ON to BUSY_RX
+phy0 state change at +3.00064s from RX_ON to BUSY_RX
+phy3 state change at +3.00272s from BUSY_TX to TX_ON
+phy2 state change at +3.00272s from BUSY_RX to RX_ON
+phy4 state change at +3.00272s from BUSY_RX to RX_ON
+Node 4 forwarding seq=2 -> 5 ttl=5
+Node 4 cannot send to neighbor 5 (blocked)
+phy1 state change at +3.00272s from BUSY_RX to RX_ON
+phy5 state change at +3.00272s from BUSY_RX to RX_ON
+phy0 state change at +3.00272s from BUSY_RX to RX_ON
+phy3 state change at +3.00291s from TX_ON to RX_ON
+phy4 state change at +3.00291s from RX_ON to TX_ON
+phy4 state change at +3.00291s from TX_ON to BUSY_TX
+phy3 state change at +3.00291s from RX_ON to BUSY_RX
+phy5 state change at +3.00291s from RX_ON to BUSY_RX
+phy0 state change at +3.00291s from RX_ON to BUSY_RX
+phy2 state change at +3.00291s from RX_ON to BUSY_RX
+phy1 state change at +3.00291s from RX_ON to BUSY_RX
+phy4 state change at +3.00326s from BUSY_TX to TX_ON
+phy3 state change at +3.00326s from BUSY_RX to RX_ON
+Node 3 confirm status = 0
+phy5 state change at +3.00326s from BUSY_RX to RX_ON
+phy0 state change at +3.00326s from BUSY_RX to RX_ON
+phy2 state change at +3.00326s from BUSY_RX to RX_ON
+phy1 state change at +3.00326s from BUSY_RX to RX_ON
+phy4 state change at +3.00346s from TX_ON to RX_ON
+Source 3 injecting seq=3
+phy3 state change at +4.00128s from RX_ON to TX_ON
+phy3 state change at +4.00128s from TX_ON to BUSY_TX
+phy2 state change at +4.00128s from RX_ON to BUSY_RX
+phy4 state change at +4.00128s from RX_ON to BUSY_RX
+phy1 state change at +4.00128s from RX_ON to BUSY_RX
+phy5 state change at +4.00128s from RX_ON to BUSY_RX
+phy0 state change at +4.00128s from RX_ON to BUSY_RX
+phy3 state change at +4.00336s from BUSY_TX to TX_ON
+phy2 state change at +4.00336s from BUSY_RX to RX_ON
+phy4 state change at +4.00336s from BUSY_RX to RX_ON
+Node 4 forwarding seq=3 -> 5 ttl=5
+Node 4 cannot send to neighbor 5 (blocked)
+phy1 state change at +4.00336s from BUSY_RX to RX_ON
+phy5 state change at +4.00336s from BUSY_RX to RX_ON
+phy0 state change at +4.00336s from BUSY_RX to RX_ON
+phy3 state change at +4.00355s from TX_ON to RX_ON
+phy4 state change at +4.00355s from RX_ON to TX_ON
+phy4 state change at +4.00355s from TX_ON to BUSY_TX
+phy3 state change at +4.00355s from RX_ON to BUSY_RX
+phy5 state change at +4.00355s from RX_ON to BUSY_RX
+phy0 state change at +4.00355s from RX_ON to BUSY_RX
+phy2 state change at +4.00355s from RX_ON to BUSY_RX
+phy1 state change at +4.00355s from RX_ON to BUSY_RX
+phy4 state change at +4.0039s from BUSY_TX to TX_ON
+phy3 state change at +4.0039s from BUSY_RX to RX_ON
+Node 3 confirm status = 0
+phy5 state change at +4.0039s from BUSY_RX to RX_ON
+phy0 state change at +4.0039s from BUSY_RX to RX_ON
+phy2 state change at +4.0039s from BUSY_RX to RX_ON
+phy1 state change at +4.0039s from BUSY_RX to RX_ON
+phy4 state change at +4.0041s from TX_ON to RX_ON
+Source 3 injecting seq=4
+phy3 state change at +5.00064s from RX_ON to TX_ON
+phy3 state change at +5.00064s from TX_ON to BUSY_TX
+phy2 state change at +5.00064s from RX_ON to BUSY_RX
+phy4 state change at +5.00064s from RX_ON to BUSY_RX
+phy1 state change at +5.00064s from RX_ON to BUSY_RX
+phy5 state change at +5.00064s from RX_ON to BUSY_RX
+phy0 state change at +5.00064s from RX_ON to BUSY_RX
+phy3 state change at +5.00272s from BUSY_TX to TX_ON
+phy2 state change at +5.00272s from BUSY_RX to RX_ON
+phy4 state change at +5.00272s from BUSY_RX to RX_ON
+Node 4 forwarding seq=4 -> 5 ttl=5
+Node 4 cannot send to neighbor 5 (blocked)
+phy1 state change at +5.00272s from BUSY_RX to RX_ON
+phy5 state change at +5.00272s from BUSY_RX to RX_ON
+phy0 state change at +5.00272s from BUSY_RX to RX_ON
+phy3 state change at +5.00291s from TX_ON to RX_ON
+phy4 state change at +5.00291s from RX_ON to TX_ON
+phy4 state change at +5.00291s from TX_ON to BUSY_TX
+phy3 state change at +5.00291s from RX_ON to BUSY_RX
+phy5 state change at +5.00291s from RX_ON to BUSY_RX
+phy0 state change at +5.00291s from RX_ON to BUSY_RX
+phy2 state change at +5.00291s from RX_ON to BUSY_RX
+phy1 state change at +5.00291s from RX_ON to BUSY_RX
+phy4 state change at +5.00326s from BUSY_TX to TX_ON
+phy3 state change at +5.00326s from BUSY_RX to RX_ON
+Node 3 confirm status = 0
+phy5 state change at +5.00326s from BUSY_RX to RX_ON
+phy0 state change at +5.00326s from BUSY_RX to RX_ON
+phy2 state change at +5.00326s from BUSY_RX to RX_ON
+phy1 state change at +5.00326s from BUSY_RX to RX_ON
+phy4 state change at +5.00346s from TX_ON to RX_ON
+Source 3 injecting seq=5
+phy3 state change at +6.00256s from RX_ON to TX_ON
+phy3 state change at +6.00256s from TX_ON to BUSY_TX
+phy2 state change at +6.00256s from RX_ON to BUSY_RX
+phy4 state change at +6.00256s from RX_ON to BUSY_RX
+phy1 state change at +6.00256s from RX_ON to BUSY_RX
+phy5 state change at +6.00256s from RX_ON to BUSY_RX
+phy0 state change at +6.00256s from RX_ON to BUSY_RX
+phy3 state change at +6.00464s from BUSY_TX to TX_ON
+phy2 state change at +6.00464s from BUSY_RX to RX_ON
+phy4 state change at +6.00464s from BUSY_RX to RX_ON
+Node 4 forwarding seq=5 -> 5 ttl=5
+Node 4 cannot send to neighbor 5 (blocked)
+phy1 state change at +6.00464s from BUSY_RX to RX_ON
+phy5 state change at +6.00464s from BUSY_RX to RX_ON
+phy0 state change at +6.00464s from BUSY_RX to RX_ON
+phy3 state change at +6.00483s from TX_ON to RX_ON
+phy4 state change at +6.00483s from RX_ON to TX_ON
+phy4 state change at +6.00483s from TX_ON to BUSY_TX
+phy3 state change at +6.00483s from RX_ON to BUSY_RX
+phy5 state change at +6.00483s from RX_ON to BUSY_RX
+phy0 state change at +6.00483s from RX_ON to BUSY_RX
+phy2 state change at +6.00483s from RX_ON to BUSY_RX
+phy1 state change at +6.00483s from RX_ON to BUSY_RX
+phy4 state change at +6.00518s from BUSY_TX to TX_ON
+phy3 state change at +6.00518s from BUSY_RX to RX_ON
+Node 3 confirm status = 0
+phy5 state change at +6.00518s from BUSY_RX to RX_ON
+phy0 state change at +6.00518s from BUSY_RX to RX_ON
+phy2 state change at +6.00518s from BUSY_RX to RX_ON
+phy1 state change at +6.00518s from BUSY_RX to RX_ON
+phy4 state change at +6.00538s from TX_ON to RX_ON
+RESULT mode=global delivered=1 ttlDrops=0 noRouteDrops=0 blockedTx=5
