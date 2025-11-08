@@ -259,6 +259,7 @@ CounterClockwiseNeighbor(uint16_t nodeIndex)
 }
 
 static bool LinkAllowed(const ForwarderContext* ctx, uint16_t from, uint16_t to);
+static bool PathToSinkAllowed(const ForwarderContext* ctx, uint16_t start, RouteDirection dir);
 static void InstallSnapshotParents(ForwarderContext* ctx);
 static void ScheduleSnapshotRefresh(ForwarderContext* ctx, double period);
 static uint16_t SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex, RingHeader* header);
@@ -396,17 +397,58 @@ LinkAllowed(const ForwarderContext* ctx, uint16_t from, uint16_t to)
     return true;
 }
 
+static bool
+PathToSinkAllowed(const ForwarderContext* ctx, uint16_t start, RouteDirection dir)
+{
+    uint16_t sink = ctx->config->sinkId;
+    if (start == sink)
+    {
+        return true;
+    }
+
+    uint16_t current = start;
+    uint16_t guard = 0;
+    while (current != sink && guard < kNumNodes)
+    {
+        uint16_t next =
+            (dir == RouteDirection::CW) ? ClockwiseNeighbor(current) : CounterClockwiseNeighbor(current);
+        if (!LinkAllowed(ctx, current, next))
+        {
+            return false;
+        }
+        current = next;
+        guard++;
+    }
+    return current == sink;
+}
+
 static void
 InstallSnapshotParents(ForwarderContext* ctx)
 {
+    uint16_t sink = ctx->config->sinkId;
     for (uint16_t i = 0; i < kNumNodes; ++i)
     {
-        if (i == ctx->config->sinkId)
+        ctx->parent[i] = i;
+    }
+    ctx->parent[sink] = sink;
+
+    for (uint16_t node = 0; node < kNumNodes; ++node)
+    {
+        if (node == sink)
         {
-            ctx->parent[i] = i;
             continue;
         }
-        ctx->parent[i] = ClockwiseNeighbor(i);
+        if (PathToSinkAllowed(ctx, node, RouteDirection::CW))
+        {
+            ctx->parent[node] = ClockwiseNeighbor(node);
+            continue;
+        }
+        if (PathToSinkAllowed(ctx, node, RouteDirection::CCW))
+        {
+            ctx->parent[node] = CounterClockwiseNeighbor(node);
+            continue;
+        }
+        // leave parent[node] == node when neither direction currently reaches sink
     }
 }
 

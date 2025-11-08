@@ -146,6 +146,8 @@ Set the bad-arc ON/OFF to define `T_dyn` (e.g., ON from 20–60 s → `T_dyn = 4
 
 **Expected:** Larger ρ → Snapshot-Global remains committed to the bad arc longer → more drops/waste, lower goodput.
 
+_Implementation note:_ `InstallSnapshotParents` keeps clockwise parents by default but walks the entire path to the sink; if any hop in that direction is blocked at the current snapshot time, the node (and thus its upstream traffic) switches to the counter-clockwise neighbor for that epoch.
+
 ---
 
 ## Milestone 7 — Finite buffers `B`, packet IDs, waste & drops
@@ -212,7 +214,7 @@ Set the bad-arc ON/OFF to define `T_dyn` (e.g., ON from 20–60 s → `T_dyn = 4
   Tests: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1` and  
   `./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`.  
   Visualization: `python3 plot_sweep.py --csv sweeps/ring6_sweep_results.csv --out-dir sweeps/plots`.
-- **M6:** (Planned) increase `--Tinfo` to stretch outage duration; leverage `ring6_sweep.py` CSV output.
+- **M6 (Done):** Enhanced `InstallSnapshotParents` so snapshots prefer clockwise routes but fall back to counter-clockwise when the current window blocks any hop to the sink. Swept `Tinfo ∈ {0, 0.5, 1, 2, 4, 8}` with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1`. Global now recovers as soon as a snapshot fires during the fault window (0.5–2 s) and degrades back to 1 delivery when `Tinfo` stretches beyond the outage (4 s, 8 s). CSV + plots refreshed under `sweeps/`.
 - **M7:** (Planned) add finite buffers + waste/drop counters.
 
 ---

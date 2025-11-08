@@ -31,6 +31,7 @@ cd references/ns-3-dev
 | M3 – clockwise forwarder | `scratch/ring6-step3.cc` | `./ns3 build scratch/ring6-step3`<br>`./build/scratch/ns3.46.1-ring6-step3-default` |
 | M4 – controller toggle + metrics | `scratch/ring6-step4.cc` | `./ns3 build scratch/ring6-step4`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=global`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local` |
 | M5 – software bad arc, sweeps | `scratch/ring6-step4.cc` | Fault demo: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`<br>Sweep: `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --bad-on 2 --bad-off 8 --count 3 --rate 2` |
+| M6 – snapshot epoch sweep | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1` |
 
 Each run prints per-hop logs plus a final `RESULT mode=… delivered=… ttlDrops=… noRouteDrops=… blockedTx=…` line for automated parsing.
 
@@ -43,7 +44,7 @@ Use `ring6_sweep.py` to sweep controller modes, snapshot periods, and fault sett
   --ns3-dir references/ns-3-dev \
   --log-dir sweeps \
   --modes global local \
-  --tinfo 0 40 80 \
+  --tinfo 0 0.5 1 2 4 8 \
   --bad-arc 2,3 --bad-on 20 --bad-off 60 \
   --rate 5 --count 10
 ```
@@ -71,5 +72,5 @@ Generated PNGs (default: `sweeps/plots/delivered_vs_tinfo.png`, `blockedTx_vs_ti
 
 ## Next Steps
 
-- Implement Milestone 6 snapshots by sweeping `--Tinfo` and charting Global vs. Local goodput.
 - Extend Milestone 7 with finite buffers, waste/drop bookkeeping, and feed those metrics into the existing RESULT/CSV pipeline.
+- Optional: explore longer sweeps (more packets or multiple bad arcs) so the refreshed snapshot logic can showcase several `Tinfo`/fault ratios in a single CSV.
