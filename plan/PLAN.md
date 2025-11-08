@@ -159,10 +159,12 @@ _Implementation note:_ `InstallSnapshotParents` keeps clockwise parents by defau
   - `DELIVERED(ID)` at sink,
   - `DROP(ID,node)` on overflow or TTL expire.
 - Compute:
-  - **Waste** = count of `TX` for IDs that never deliver and later drop downstream.
-  - **Drops** = all `DROP` events.
+- **Waste** = count of `TX` for IDs that never deliver and later drop downstream.
+- **Drops** = all `DROP` events.
 
 **Expected:** In Global mode, drops/waste spike during the bad-arc window; Local remains low.
+
+_Implementation note:_ Each node now owns a bounded software queue (configurable via `--B`) that must accept packets before they reach `McpsDataRequest`. The run logs `TX/DROP/DELIVERED` events per sequence ID and tracks `queueDrops` (admission failures) plus `wasteTx` (all transmissions spent on packets that eventually drop). These new counters flow through the `RESULT` line, sweep CSV, and Matplotlib plots.
 
 ---
 
@@ -215,7 +217,7 @@ _Implementation note:_ `InstallSnapshotParents` keeps clockwise parents by defau
   `./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`.  
   Visualization: `python3 plot_sweep.py --csv sweeps/ring6_sweep_results.csv --out-dir sweeps/plots`.
 - **M6 (Done):** Enhanced `InstallSnapshotParents` so snapshots prefer clockwise routes but fall back to counter-clockwise when the current window blocks any hop to the sink. Swept `Tinfo ∈ {0, 0.5, 1, 2, 4, 8}` with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1`. Global now recovers as soon as a snapshot fires during the fault window (0.5–2 s) and degrades back to 1 delivery when `Tinfo` stretches beyond the outage (4 s, 8 s). CSV + plots refreshed under `sweeps/`.
-- **M7:** (Planned) add finite buffers + waste/drop counters.
+- **M7 (Done):** Added per-node buffers (`--B`) plus TX/DROP logging and new metrics (`queueDrops`, `wasteTx`). Validated with `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1 --buffer 2` and refreshed plots for delivered/blocked/queueDrops/wasteTx.
 
 ---
 

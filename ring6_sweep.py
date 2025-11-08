@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--bad-on", type=float, default=20.0)
     parser.add_argument("--bad-off", type=float, default=60.0)
     parser.add_argument("--ttl", type=int, default=6)
+    parser.add_argument("--buffer", type=int, default=5, help="per-node buffer capacity (B)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--csv", default=None, help="CSV output path (default: <log-dir>/ring6_sweep_results.csv)")
 
@@ -111,6 +112,7 @@ def main():
                 "source": args.source,
                 "sink": args.sink,
                 "ttl": args.ttl,
+                "B": args.buffer,
             }
             if args.bad_arc:
                 run_args["badArc"] = args.bad_arc
@@ -132,9 +134,10 @@ def main():
                     "count": args.count,
                     "payload": args.payload,
                     "source": args.source,
-                    "sink": args.sink,
-                    "ttl": args.ttl,
-                    "badArc": args.bad_arc or "",
+                "sink": args.sink,
+                "ttl": args.ttl,
+                "B": args.buffer,
+                "badArc": args.bad_arc or "",
                     "badOn": args.bad_on if args.bad_arc else "",
                     "badOff": args.bad_off if args.bad_arc else "",
                     "status": result["status"],
@@ -146,6 +149,8 @@ def main():
                     "ttlDrops": metrics.get("ttlDrops", ""),
                     "noRouteDrops": metrics.get("noRouteDrops", ""),
                     "blockedTx": metrics.get("blockedTx", ""),
+                    "queueDrops": metrics.get("queueDrops", ""),
+                    "wasteTx": metrics.get("wasteTx", ""),
                 })
                 rows.append(row)
 
@@ -168,6 +173,7 @@ def main():
             "source",
             "sink",
             "ttl",
+            "B",
             "badArc",
             "badOn",
             "badOff",
@@ -175,6 +181,8 @@ def main():
             "ttlDrops",
             "noRouteDrops",
             "blockedTx",
+            "queueDrops",
+            "wasteTx",
             "status",
             "log",
         ]

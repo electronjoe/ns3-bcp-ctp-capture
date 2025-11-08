@@ -16,8 +16,8 @@ def load_rows(csv_path):
         reader = csv.DictReader(fh)
         for row in reader:
             row["Tinfo"] = float(row["Tinfo"])
-            row["delivered"] = float(row["delivered"]) if row["delivered"] != "" else 0.0
-            row["blockedTx"] = float(row["blockedTx"]) if row["blockedTx"] != "" else 0.0
+            for field in ["delivered", "blockedTx", "ttlDrops", "noRouteDrops", "queueDrops", "wasteTx"]:
+                row[field] = float(row[field]) if row[field] != "" else 0.0
             rows.append(row)
     return rows
 
@@ -48,7 +48,11 @@ def main():
     parser = argparse.ArgumentParser(description="Plot ring6 sweep CSV metrics.")
     parser.add_argument("--csv", default="sweeps/ring6_sweep_results.csv", type=Path)
     parser.add_argument("--out-dir", default="sweeps/plots", type=Path)
-    parser.add_argument("--metrics", nargs="+", default=["delivered", "blockedTx"])
+    parser.add_argument(
+        "--metrics",
+        nargs="+",
+        default=["delivered", "blockedTx", "queueDrops", "wasteTx"],
+    )
     args = parser.parse_args()
 
     csv_path = args.csv.resolve()

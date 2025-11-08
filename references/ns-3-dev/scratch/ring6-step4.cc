@@ -24,11 +24,13 @@
 
 #include <array>
 #include <cmath>
+#include <deque>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 using namespace ns3;
@@ -53,6 +55,20 @@ enum class RouteDirection : uint8_t
     AUTO = 0,
     CW = 1,
     CCW = 2
+};
+
+struct PendingTx
+{
+    Ptr<Packet> packet;
+    uint16_t neighbor{0};
+    uint32_t sequence{0};
+};
+
+struct PacketHistoryEntry
+{
+    uint32_t txCount{0};
+    bool delivered{false};
+    bool dropped{false};
 };
 
 class RingHeader : public Header
@@ -218,6 +234,7 @@ struct RingConfig
     uint32_t payloadBytes{40};
     uint8_t ttl{kNumNodes};
     double snapshotPeriod{0.0}; // seconds, 0 disables periodic snapshots
+    uint32_t bufferCapacity{5};
     bool hasFault{false};
     uint16_t faultFrom{0};
     uint16_t faultTo{0};
@@ -231,6 +248,8 @@ struct Metrics
     uint32_t ttlDrops{0};
     uint32_t noRouteDrops{0};
     uint32_t blockedTransmissions{0};
+    uint32_t queueDrops{0};
+    uint32_t wasteTx{0};
 };
 
 struct ForwarderContext
@@ -244,6 +263,10 @@ struct ForwarderContext
     uint8_t nextMsduHandle{0};
     uint32_t nextSequence{0};
     Metrics metrics;
+    std::array<std::deque<PendingTx>, kNumNodes> txQueues;
+    std::array<bool, kNumNodes> txBusy{};
+    std::array<uint32_t, kNumNodes> inFlightSeq{0};
+    std::unordered_map<uint32_t, PacketHistoryEntry> packetHistory;
 };
 
 static uint16_t
@@ -262,16 +285,32 @@ static bool LinkAllowed(const ForwarderContext* ctx, uint16_t from, uint16_t to)
 static bool PathToSinkAllowed(const ForwarderContext* ctx, uint16_t start, RouteDirection dir);
 static void InstallSnapshotParents(ForwarderContext* ctx);
 static void ScheduleSnapshotRefresh(ForwarderContext* ctx, double period);
+static void RegisterPacket(ForwarderContext* ctx, uint32_t sequence);
+static void RecordTxEvent(ForwarderContext* ctx, uint32_t sequence);
+static void RecordDeliveryEvent(ForwarderContext* ctx, uint32_t sequence);
+static void RecordDropEvent(ForwarderContext* ctx, uint32_t sequence, const std::string& reason, uint16_t nodeIndex);
 static uint16_t SelectNextHop(ForwarderContext* ctx, uint16_t nodeIndex, RingHeader* header);
-static void SendToNeighbor(ForwarderContext* ctx, uint16_t nodeIndex, uint16_t neighborIndex, Ptr<Packet> packet);
+static bool EnqueueTransmission(ForwarderContext* ctx,
+                                uint16_t nodeIndex,
+                                uint16_t neighborIndex,
+                                Ptr<Packet> packet,
+                                uint32_t sequence);
+static void TryTransmitNext(ForwarderContext* ctx, uint16_t nodeIndex);
+static void HandleTxComplete(ForwarderContext* ctx, uint16_t nodeIndex);
+static void SendToNeighbor(ForwarderContext* ctx,
+                           uint16_t nodeIndex,
+                           uint16_t neighborIndex,
+                           Ptr<Packet> packet,
+                           uint32_t sequence);
 static void ReportStats(const ForwarderContext* ctx, const std::string& modeStr);
 static void ReportStats(const ForwarderContext* ctx, const std::string& modeStr);
 
 static void
-DataConfirm(uint16_t nodeIndex, McpsDataConfirmParams params)
+DataConfirm(ForwarderContext* ctx, uint16_t nodeIndex, McpsDataConfirmParams params)
 {
     NS_LOG_UNCOND("Node " << nodeIndex
                           << " confirm status = " << static_cast<uint16_t>(params.m_status));
+    HandleTxComplete(ctx, nodeIndex);
 }
 
 static void
@@ -305,6 +344,7 @@ ForwardingIndication(ForwarderContext* ctx,
         {
             uint32_t hops = (ctx->config->ttl - header.GetTtl()) + 1;
             ctx->metrics.delivered++;
+            RecordDeliveryEvent(ctx, header.GetSequence());
             NS_LOG_UNCOND("DELIVERED seq=" << header.GetSequence() << " src="
                                            << static_cast<uint32_t>(header.GetSrc())
                                            << " hops=" << hops);
@@ -320,8 +360,7 @@ ForwardingIndication(ForwarderContext* ctx,
     if (ttl <= 1)
     {
         ctx->metrics.ttlDrops++;
-        NS_LOG_UNCOND("Node " << nodeIndex << " dropping seq=" << header.GetSequence()
-                              << " ttl exhausted");
+        RecordDropEvent(ctx, header.GetSequence(), "ttl", nodeIndex);
         return;
     }
 
@@ -330,43 +369,13 @@ ForwardingIndication(ForwarderContext* ctx,
     if (nextHop == nodeIndex)
     {
         ctx->metrics.noRouteDrops++;
-        NS_LOG_UNCOND("Node " << nodeIndex << " has no available next hop for seq="
-                              << header.GetSequence());
+        RecordDropEvent(ctx, header.GetSequence(), "no_route", nodeIndex);
         return;
     }
     packet->AddHeader(header);
     NS_LOG_UNCOND("Node " << nodeIndex << " forwarding seq=" << header.GetSequence()
                           << " -> " << nextHop << " ttl=" << static_cast<uint32_t>(header.GetTtl()));
-    SendToNeighbor(ctx, nodeIndex, nextHop, packet);
-}
-
-static void
-SendToNeighbor(ForwarderContext* ctx, uint16_t nodeIndex, uint16_t neighborIndex, Ptr<Packet> packet)
-{
-    if (!LinkAllowed(ctx, nodeIndex, neighborIndex))
-    {
-        ctx->metrics.blockedTransmissions++;
-        NS_LOG_UNCOND("Node " << nodeIndex << " cannot send to neighbor " << neighborIndex
-                              << " (blocked)");
-        return;
-    }
-
-    Ptr<LrWpanNetDevice> device = ctx->devices->at(nodeIndex);
-
-    McpsDataRequestParams params;
-    params.m_dstPanId = 0;
-    params.m_srcAddrMode = SHORT_ADDR;
-    params.m_dstAddrMode = SHORT_ADDR;
-    params.m_dstAddr = ctx->shortAddrs->at(neighborIndex);
-    params.m_msduHandle = ctx->nextMsduHandle++;
-    params.m_txOptions = TX_OPTION_ACK;
-
-    Simulator::ScheduleWithContext(device->GetNode()->GetId(),
-                                   Seconds(0),
-                                   &LrWpanMac::McpsDataRequest,
-                                   device->GetMac(),
-                                   params,
-                                   packet);
+    SendToNeighbor(ctx, nodeIndex, nextHop, packet, header.GetSequence());
 }
 
 static bool
@@ -453,6 +462,125 @@ InstallSnapshotParents(ForwarderContext* ctx)
 }
 
 static void
+RegisterPacket(ForwarderContext* ctx, uint32_t sequence)
+{
+    ctx->packetHistory[sequence] = PacketHistoryEntry{};
+}
+
+static void
+RecordTxEvent(ForwarderContext* ctx, uint32_t sequence)
+{
+    ctx->packetHistory[sequence].txCount++;
+}
+
+static void
+RecordDeliveryEvent(ForwarderContext* ctx, uint32_t sequence)
+{
+    auto& entry = ctx->packetHistory[sequence];
+    entry.delivered = true;
+}
+
+static void
+RecordDropEvent(ForwarderContext* ctx, uint32_t sequence, const std::string& reason, uint16_t nodeIndex)
+{
+    auto& entry = ctx->packetHistory[sequence];
+    if (entry.delivered || entry.dropped)
+    {
+        return;
+    }
+    entry.dropped = true;
+    ctx->metrics.wasteTx += entry.txCount;
+    NS_LOG_UNCOND("DROP seq=" << sequence << " node=" << nodeIndex << " reason=" << reason
+                              << " tx=" << entry.txCount);
+}
+
+static bool
+EnqueueTransmission(ForwarderContext* ctx,
+                    uint16_t nodeIndex,
+                    uint16_t neighborIndex,
+                    Ptr<Packet> packet,
+                    uint32_t sequence)
+{
+    uint32_t capacity = ctx->config->bufferCapacity;
+    auto& queue = ctx->txQueues[nodeIndex];
+    uint32_t inService = ctx->txBusy[nodeIndex] ? 1u : 0u;
+    if (capacity > 0 && queue.size() + inService >= capacity)
+    {
+        ctx->metrics.queueDrops++;
+        RecordDropEvent(ctx, sequence, "queue_full", nodeIndex);
+        return false;
+    }
+
+    queue.push_back(PendingTx{packet, neighborIndex, sequence});
+    TryTransmitNext(ctx, nodeIndex);
+    return true;
+}
+
+static void
+TryTransmitNext(ForwarderContext* ctx, uint16_t nodeIndex)
+{
+    if (ctx->txBusy[nodeIndex])
+    {
+        return;
+    }
+
+    auto& queue = ctx->txQueues[nodeIndex];
+    while (!queue.empty())
+    {
+        PendingTx tx = queue.front();
+        queue.pop_front();
+
+        if (!LinkAllowed(ctx, nodeIndex, tx.neighbor))
+        {
+            ctx->metrics.blockedTransmissions++;
+            RecordDropEvent(ctx, tx.sequence, "blocked", nodeIndex);
+            continue;
+        }
+
+        Ptr<LrWpanNetDevice> device = ctx->devices->at(nodeIndex);
+        McpsDataRequestParams params;
+        params.m_dstPanId = 0;
+        params.m_srcAddrMode = SHORT_ADDR;
+        params.m_dstAddrMode = SHORT_ADDR;
+        params.m_dstAddr = ctx->shortAddrs->at(tx.neighbor);
+        params.m_msduHandle = ctx->nextMsduHandle++;
+        params.m_txOptions = TX_OPTION_ACK;
+
+        ctx->txBusy[nodeIndex] = true;
+        ctx->inFlightSeq[nodeIndex] = tx.sequence;
+        RecordTxEvent(ctx, tx.sequence);
+        NS_LOG_UNCOND("TX seq=" << tx.sequence << " from=" << nodeIndex << " to=" << tx.neighbor
+                                << " queueDepth=" << queue.size());
+
+        Simulator::ScheduleWithContext(device->GetNode()->GetId(),
+                                       Seconds(0),
+                                       &LrWpanMac::McpsDataRequest,
+                                       device->GetMac(),
+                                       params,
+                                       tx.packet);
+        break;
+    }
+}
+
+static void
+HandleTxComplete(ForwarderContext* ctx, uint16_t nodeIndex)
+{
+    ctx->txBusy[nodeIndex] = false;
+    ctx->inFlightSeq[nodeIndex] = 0;
+    TryTransmitNext(ctx, nodeIndex);
+}
+
+static void
+SendToNeighbor(ForwarderContext* ctx,
+               uint16_t nodeIndex,
+               uint16_t neighborIndex,
+               Ptr<Packet> packet,
+               uint32_t sequence)
+{
+    EnqueueTransmission(ctx, nodeIndex, neighborIndex, packet, sequence);
+}
+
+static void
 ScheduleSnapshotRefresh(ForwarderContext* ctx, double period)
 {
     InstallSnapshotParents(ctx);
@@ -468,7 +596,9 @@ ReportStats(const ForwarderContext* ctx, const std::string& modeStr)
     std::cout << "RESULT mode=" << modeStr << " delivered=" << ctx->metrics.delivered
               << " ttlDrops=" << ctx->metrics.ttlDrops
               << " noRouteDrops=" << ctx->metrics.noRouteDrops
-              << " blockedTx=" << ctx->metrics.blockedTransmissions << std::endl;
+              << " blockedTx=" << ctx->metrics.blockedTransmissions
+              << " queueDrops=" << ctx->metrics.queueDrops << " wasteTx=" << ctx->metrics.wasteTx
+              << std::endl;
 }
 
 static uint16_t
@@ -544,10 +674,9 @@ GenerateSourceTraffic(ForwarderContext* ctx,
     }
 
     Ptr<Packet> packet = Create<Packet>(config->payloadBytes);
-    RingHeader header(config->sourceId,
-                      config->sinkId,
-                      config->ttl,
-                      ctx->nextSequence++);
+    uint32_t sequence = ctx->nextSequence++;
+    RingHeader header(config->sourceId, config->sinkId, config->ttl, sequence);
+    RegisterPacket(ctx, sequence);
     NS_LOG_UNCOND("Source " << config->sourceId << " injecting seq=" << header.GetSequence());
     uint16_t nextHop = SelectNextHop(ctx, config->sourceId, &header);
     if (nextHop == config->sourceId)
@@ -555,11 +684,12 @@ GenerateSourceTraffic(ForwarderContext* ctx,
         NS_LOG_UNCOND("Source " << config->sourceId << " has no available neighbor; dropping seq="
                                 << header.GetSequence());
         ctx->metrics.noRouteDrops++;
+        RecordDropEvent(ctx, header.GetSequence(), "no_route", config->sourceId);
     }
     else
     {
         packet->AddHeader(header);
-        SendToNeighbor(ctx, config->sourceId, nextHop, packet);
+        SendToNeighbor(ctx, config->sourceId, nextHop, packet, header.GetSequence());
     }
 
     if (remaining > 1)
@@ -593,6 +723,7 @@ main(int argc, char* argv[])
     cmd.AddValue("ttl", "initial TTL carried in RingHeader", config.ttl);
     cmd.AddValue("mode", "controller mode: global or local", modeStr);
     cmd.AddValue("Tinfo", "snapshot period (seconds) for global mode; 0 disables", config.snapshotPeriod);
+    cmd.AddValue("B", "per-node buffer capacity (packets)", config.bufferCapacity);
     cmd.AddValue("badArc",
                  "directed link to block during window, format i,j (optional)",
                  badArcStr);
@@ -611,6 +742,7 @@ main(int argc, char* argv[])
     NS_ABORT_MSG_IF(config.sinkId >= kNumNodes, "sinkId must be within ring");
     NS_ABORT_MSG_IF(config.sourceId == config.sinkId, "sourceId must differ from sinkId");
     NS_ABORT_MSG_IF(config.ttl == 0, "ttl must be >= 1");
+    NS_ABORT_MSG_IF(config.bufferCapacity == 0, "B must be >= 1");
 
     if (!badArcStr.empty())
     {
@@ -695,7 +827,7 @@ main(int argc, char* argv[])
 
         devices[i]->GetMac()->SetMcpsDataIndicationCallback(
             MakeBoundCallback(&ForwardingIndication, &ctx, i));
-        devices[i]->GetMac()->SetMcpsDataConfirmCallback(MakeBoundCallback(&DataConfirm, i));
+        devices[i]->GetMac()->SetMcpsDataConfirmCallback(MakeBoundCallback(&DataConfirm, &ctx, i));
     }
 
     if (ctx.mode == ControllerMode::GLOBAL)

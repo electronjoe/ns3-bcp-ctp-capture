@@ -32,8 +32,9 @@ cd references/ns-3-dev
 | M4 – controller toggle + metrics | `scratch/ring6-step4.cc` | `./ns3 build scratch/ring6-step4`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=global`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local` |
 | M5 – software bad arc, sweeps | `scratch/ring6-step4.cc` | Fault demo: `./build/scratch/ns3.46.1-ring6-step4-default --mode=global --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`<br>`./build/scratch/ns3.46.1-ring6-step4-default --mode=local --badArc=4,5 --badOn=2 --badOff=8 --count=6 --rate=1`<br>Sweep: `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 4 --modes global local --bad-arc 2,3 --bad-on 2 --bad-off 8 --count 3 --rate 2` |
 | M6 – snapshot epoch sweep | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1` |
+| M7 – finite buffers + waste/drops | `scratch/ring6-step4.cc` | `./ring6_sweep.py --ns3-dir references/ns-3-dev --log-dir sweeps --tinfo 0 0.5 1 2 4 8 --modes global local --bad-arc 4,5 --bad-on 2 --bad-off 8 --count 6 --rate 1 --buffer 2` |
 
-Each run prints per-hop logs plus a final `RESULT mode=… delivered=… ttlDrops=… noRouteDrops=… blockedTx=…` line for automated parsing.
+Each run now logs `TX`, `DROP`, and `DELIVERED` events per packet ID, and ends with `RESULT mode=… delivered=… ttlDrops=… noRouteDrops=… blockedTx=… queueDrops=… wasteTx=…` so automation can capture buffer drops and wasted transmissions.
 
 ## Automating Sweeps & CSV Output
 
@@ -46,6 +47,7 @@ Use `ring6_sweep.py` to sweep controller modes, snapshot periods, and fault sett
   --modes global local \
   --tinfo 0 0.5 1 2 4 8 \
   --bad-arc 2,3 --bad-on 20 --bad-off 60 \
+  --buffer 2 \
   --rate 5 --count 10
 ```
 
@@ -64,6 +66,14 @@ python3 plot_sweep.py \
 
 Generated PNGs (default: `sweeps/plots/delivered_vs_tinfo.png`, `blockedTx_vs_tinfo.png`, …) plot each controller’s metric against `Tinfo`.  Re-run after each sweep to refresh the charts.
 
+## Metrics & Logging
+
+- `TX seq=… from=X to=Y queueDepth=Z` – emitted whenever a node dequeues a packet and calls `McpsDataRequest`.
+- `DROP seq=… reason=…` – admission drops (queue full), blocked transmissions, TTL expiry, and no-route situations all log via this helper and feed the `queueDrops`/`wasteTx` counters.
+- `DELIVERED seq=… src=…` – sink deliveries (also increments `delivered`).
+- `queueDrops` counts packets refused because a node’s buffer (configured via `--B`/`--buffer`) was full.
+- `wasteTx` sums every `TX` for packets that eventually drop, making it easy to spot wasted airtime in Snapshot-Global runs.
+
 ## Logs & Artifacts
 
 - Per-milestone “baseline” logs live alongside their scratch sources (e.g., `references/ns-3-dev/scratch/ring6-step3.log`).
@@ -72,5 +82,6 @@ Generated PNGs (default: `sweeps/plots/delivered_vs_tinfo.png`, `blockedTx_vs_ti
 
 ## Next Steps
 
-- Extend Milestone 7 with finite buffers, waste/drop bookkeeping, and feed those metrics into the existing RESULT/CSV pipeline.
-- Optional: explore longer sweeps (more packets or multiple bad arcs) so the refreshed snapshot logic can showcase several `Tinfo`/fault ratios in a single CSV.
+- Add EWMA-based ETX gating or BCP-style queue differentials so Snapshot-Global can respond to dynamic link quality instead of fixed parents.
+- Explore longer sweeps (multiple bad arcs, varied `--count/--rate`) to stress the finite buffers and show `queueDrops` more prominently in the CSV/plots.
+- Optional: persist example CSV/PNG artifacts in the repo to make documentation reproducible without rerunning ns-3.
