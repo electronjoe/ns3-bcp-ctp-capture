@@ -9,6 +9,10 @@
 #include "ns3/sixlowpan-module.h"
 #include "ns3/internet-module.h"
 #include "ns3/applications-module.h"
+#include "ns3/packet-socket-helper.h"
+#include "ns3/packet-socket-address.h"
+#include "apps/packet_sprayer.h"
+#include "apps/raw_l2_sink.h"
 #include <fstream>
 #include <iomanip>
 
@@ -82,26 +86,6 @@ SetTxDbmAndNoise(Ptr<LrWpanNetDevice> dev,
   // MAC retries are needed for proper link operation (ACKs, etc.)
 }
 
-// Application-level packet reception counter
-struct RxCounters {
-  uint32_t appRx{0};  // Count of packets received at application (PacketSink)
-};
-
-static void
-OnPacketSinkRx(RxCounters* c, Ptr<const Packet> p, const Address& addr) {
-  c->appRx++;
-}
-
-// Keep MAC counters for debugging/comparison (optional)
-struct MacCounters {
-  uint32_t ok{0}, drop{0};
-};
-
-static void
-OnMacTxOk(MacCounters* c, Ptr<const Packet> p) { c->ok++; }
-
-static void
-OnMacTxDrop(MacCounters* c, Ptr<const Packet> p) { c->drop++; }
 
 // Build a 2-node or 3-node scene on a Spectrum channel
 struct WpanScene {
@@ -109,7 +93,6 @@ struct WpanScene {
   NetDeviceContainer devs;
   Ptr<SingleModelSpectrumChannel> channel;
   Ptr<LogDistancePropagationLossModel> loss;
-  Ipv6InterfaceContainer ifaces;
 };
 
 static WpanScene
@@ -142,16 +125,10 @@ MakeScene(uint32_t N, const CalibCfg& cfg) {
 
     // Set transmit power using LrWpanSpectrumValueHelper
     SetTxDbmAndNoise(dev, cfg.txPowerDbm, channelNumber, cfg.noiseFigureDb, cfg.bandwidthHz);
-  }
 
-  // IPv6 stack for simple UDP echo
-  InternetStackHelper internet; internet.Install(s.nodes);
-  SixLowPanHelper six; auto sixDevs = six.Install(s.devs);
-  Ipv6AddressHelper ipv6; ipv6.SetBase("2001:db8:calib::", 64);
-  s.ifaces = ipv6.Assign(sixDevs);
-  for (uint32_t i=0;i<s.ifaces.GetN();++i){
-    s.ifaces.SetForwarding(i,true);
-    s.ifaces.SetDefaultRouteInAllNodes(i);
+    // Set MAC retries to 0 for pure PER measurement in calibration
+    // Note: Setting to 0 may disable ACKs entirely; use 1-2 for single-attempt with ACKs
+    dev->GetMac()->SetMacMaxFrameRetries(1);
   }
 
   return s;
@@ -208,7 +185,7 @@ int main(int argc, char** argv) {
 
   if (mode == "per-sinr-sweep") {
     std::ofstream csv(cfg.outDir + "/per_vs_sinr.csv");
-    csv << "distance_m,sinr_db,mac_tx_ok,mac_tx_drop,mac_rx_data,per\n";
+    csv << "distance_m,sinr_db,offered,received,per\n";
 
     for (double d : cfg.distances) {
       auto scene = MakeScene(2, cfg);
@@ -216,63 +193,51 @@ int main(int argc, char** argv) {
       scene.nodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(0,0,0));
       scene.nodes.Get(1)->GetObject<MobilityModel>()->SetPosition(Vector(d,0,0));
 
-      // Use OnOff application for asynchronous packet sending (no waiting for responses)
-      uint16_t port = 9;
+      // L2 PacketSocket path: direct frame transmission without IP stack delays
+      using namespace calib;
 
-      // Sink application to receive packets
-      PacketSinkHelper sink("ns3::UdpSocketFactory",
-                           Inet6SocketAddress(Ipv6Address::GetAny(), port));
-      auto appsS = sink.Install(scene.nodes.Get(1));
-      appsS.Start(Seconds(0.5)); appsS.Stop(Seconds(110.0));
+      // Install PacketSocketFactory on nodes (needed for PacketSocket)
+      PacketSocketHelper packetSocket;
+      packetSocket.Install(scene.nodes);
 
-      Ipv6Address dst = scene.ifaces.GetAddress(1, 1); // global address of node 1
+      // L2 sink on receiver
+      auto sink = CreateObject<RawL2SinkApp>();
+      scene.nodes.Get(1)->AddApplication(sink);
+      sink->SetStartTime(Seconds(0.5));
+      sink->SetStopTime(Seconds(30.0));
 
-      // OnOff application sends packets at controlled rate without waiting
-      OnOffHelper onoff("ns3::UdpSocketFactory",
-                       Address(Inet6SocketAddress(dst, port)));
-      onoff.SetConstantRate(DataRate("50kbps"), 40);  // 50kbps with 40-byte packets
-      onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=200.0]"));  // Always on
-      onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));   // Never off
-      auto appsC = onoff.Install(scene.nodes.Get(0));
-      appsC.Start(Seconds(5.0)); appsC.Stop(Seconds(105.0));
-
-      // Trace PacketSink to count application-layer packets received
-      RxCounters rxCtr{};
-      Ptr<PacketSink> pktSink = DynamicCast<PacketSink>(appsS.Get(0));
-      pktSink->TraceConnectWithoutContext("Rx", MakeBoundCallback(&OnPacketSinkRx, &rxCtr));
-
-      // Trace MAC on sender to count transmitted frames
-      MacCounters macCtr{};
+      // L2 sprayer on sender
+      auto sprayer = CreateObject<PacketSprayerApp>();
       auto dev0 = DynamicCast<lrwpan::LrWpanNetDevice>(scene.devs.Get(0));
-      auto mac0 = dev0->GetMac();
-      mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &macCtr));
-      mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &macCtr));
+      auto dev1 = DynamicCast<lrwpan::LrWpanNetDevice>(scene.devs.Get(1));
+      sprayer->Configure(dev0, dev1->GetAddress(), /*pktSize*/40,
+                        /*count*/ cfg.packetsPerPoint, /*interval*/ MilliSeconds(2));
+      scene.nodes.Get(0)->AddApplication(sprayer);
+      sprayer->SetStartTime(Seconds(5.0));
+      sprayer->SetStopTime(Seconds(25.0));
 
       // Compute mean SINR (no interferers)
       auto mm0 = scene.nodes.Get(0)->GetObject<MobilityModel>();
       auto mm1 = scene.nodes.Get(1)->GetObject<MobilityModel>();
       double sinrDb = ComputeSinrDb(scene.loss, mm0, mm1, {}, cfg.txPowerDbm, cfg.bandwidthHz, cfg.noiseFigureDb);
 
-      Simulator::Stop(Seconds(115.0));
+      Simulator::Stop(Seconds(30.0));
       Simulator::Run();
       Simulator::Destroy();
 
-      // PER = (transmitted - received) / transmitted
-      // macCtr.ok = frames successfully transmitted (ACKed)
-      // rxCtr.appRx = packets received at application layer (PacketSink)
-      double per = 0.0;
-      uint32_t txTotal = macCtr.ok + macCtr.drop;
-      if (txTotal > 0) per = (double)(txTotal - rxCtr.appRx) / (double)txTotal;
+      uint32_t offered = sprayer->Sent();
+      uint32_t received = sink->Received();
+      double per = (offered > 0) ? 1.0 - (double)received / (double)offered : 0.0;
+
       csv << std::fixed << std::setprecision(2)
-          << d << "," << sinrDb << "," << macCtr.ok << "," << macCtr.drop << ","
-          << rxCtr.appRx << "," << per << "\n";
+          << d << "," << sinrDb << "," << offered << "," << received << "," << per << "\n";
     }
     csv.close();
   }
   else if (mode == "capture-test") {
     // Three nodes: 0->1 (desired), 2 interferer near 1. Sweep P2-P0 around captureDb.
     std::ofstream csv(cfg.outDir + "/capture_toggle.csv");
-    csv << "delta_db,mac_tx_ok,mac_rx_data,per\n";
+    csv << "delta_db,offered,received,per\n";
 
     std::vector<double> deltas = {-8,-6,-4,-2,0,2,4,6,8};
     for (double ddb : deltas) {
@@ -289,53 +254,45 @@ int main(int argc, char** argv) {
       // Set interferer power to base + delta
       SetTxDbmAndNoise(dev2, cfg.txPowerDbm + ddb, 11, cfg.noiseFigureDb, cfg.bandwidthHz);
 
-      // Use OnOff application for asynchronous packet sending
-      uint16_t port = 9;
+      // L2 PacketSocket path
+      using namespace calib;
 
-      // Sink application to receive packets
-      PacketSinkHelper sink("ns3::UdpSocketFactory",
-                           Inet6SocketAddress(Ipv6Address::GetAny(), port));
-      auto appsS = sink.Install(scene.nodes.Get(1));
-      appsS.Start(Seconds(0.5)); appsS.Stop(Seconds(30.0));
+      // Install PacketSocketFactory on nodes (needed for PacketSocket)
+      PacketSocketHelper packetSocket;
+      packetSocket.Install(scene.nodes);
 
-      Ipv6Address dst = scene.ifaces.GetAddress(1, 1); // global address of node 1
+      // L2 sink on receiver
+      auto sink = CreateObject<RawL2SinkApp>();
+      scene.nodes.Get(1)->AddApplication(sink);
+      sink->SetStartTime(Seconds(0.5));
+      sink->SetStopTime(Seconds(30.0));
 
-      // Desired transmitter sends packets at controlled rate
-      OnOffHelper onoff("ns3::UdpSocketFactory",
-                       Address(Inet6SocketAddress(dst, port)));
-      onoff.SetConstantRate(DataRate("8kbps"), 40);  // 8kbps with 40-byte packets = 25 pps
-      onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=100.0]"));  // Always on
-      onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));   // Never off
-      onoff.SetAttribute("MaxBytes", UintegerValue(cfg.packetsPerPoint * 40));
-      auto appsC = onoff.Install(scene.nodes.Get(0));
-      appsC.Start(Seconds(5.0)); appsC.Stop(Seconds(25.0));
+      // Desired transmitter (node 0) sprayer
+      auto sprayer = CreateObject<PacketSprayerApp>();
+      auto dev1 = DynamicCast<lrwpan::LrWpanNetDevice>(scene.devs.Get(1));
+      sprayer->Configure(dev0, dev1->GetAddress(), /*pktSize*/40,
+                        /*count*/ cfg.packetsPerPoint, /*interval*/ MilliSeconds(2));
+      scene.nodes.Get(0)->AddApplication(sprayer);
+      sprayer->SetStartTime(Seconds(5.0));
+      sprayer->SetStopTime(Seconds(25.0));
 
-      // Interferer 2 sends CBR to RX 1 concurrently
-      OnOffHelper interferer("ns3::UdpSocketFactory", Address(Inet6SocketAddress(dst, port)));
-      interferer.SetConstantRate(DataRate("100kbps"), 40);
-      interferer.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=100.0]"));  // Always on
-      interferer.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));   // Never off
-      auto appsI = interferer.Install(scene.nodes.Get(2));
-      appsI.Start(Seconds(5.0)); appsI.Stop(Seconds(25.0));
+      // Interferer (node 2) sprayer - high rate
+      auto interferer = CreateObject<PacketSprayerApp>();
+      interferer->Configure(dev2, dev1->GetAddress(), /*pktSize*/40,
+                           /*count*/ 10000, /*interval*/ MicroSeconds(100)); // ~10kpps
+      scene.nodes.Get(2)->AddApplication(interferer);
+      interferer->SetStartTime(Seconds(5.0));
+      interferer->SetStopTime(Seconds(25.0));
 
-      // Trace PacketSink to count application-layer packets received
-      RxCounters rxCtr{};
-      Ptr<PacketSink> pktSink = DynamicCast<PacketSink>(appsS.Get(0));
-      pktSink->TraceConnectWithoutContext("Rx", MakeBoundCallback(&OnPacketSinkRx, &rxCtr));
-
-      // Trace MAC on desired sender (node 0)
-      MacCounters macCtr{};
-      auto mac0 = dev0->GetMac();
-      mac0->TraceConnectWithoutContext("MacTxOk", MakeBoundCallback(&OnMacTxOk, &macCtr));
-      mac0->TraceConnectWithoutContext("MacTxDrop", MakeBoundCallback(&OnMacTxDrop, &macCtr));
-
-      Simulator::Stop(Seconds(125.0));
+      Simulator::Stop(Seconds(30.0));
       Simulator::Run();
       Simulator::Destroy();
 
-      uint32_t txTotal = macCtr.ok + macCtr.drop;
-      double per = (txTotal>0) ? (double)(txTotal - rxCtr.appRx) / (double)txTotal : 1.0;
-      csv << ddb << "," << macCtr.ok << "," << rxCtr.appRx << "," << per << "\n";
+      uint32_t offered = sprayer->Sent();
+      uint32_t received = sink->Received();
+      double per = (offered > 0) ? 1.0 - (double)received / (double)offered : 1.0;
+
+      csv << ddb << "," << offered << "," << received << "," << per << "\n";
     }
     csv.close();
   }

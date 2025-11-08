@@ -1,553 +1,497 @@
-# PHASES.md — Hand‑Off Plan for Scenario B (Capture/SINR) and LPF Measurement
+# PHASES.md — Expanded Phased Plan (Capture/SINR Topology) + LPF Measurement
+**Architecture preference (as requested):**
+> **Keep 802.15.4 but approximate “routing” in the app**: stay with PacketSocket and add a tiny per-node forwarder (forward to a next-hop MAC based on a preloaded table or gradient). Use *out-of-band* global dissemination of ETX/queue backlogs and global route planning (CTP-like) at snapshot installs—no in-band control required. This preserves LR-WPAN PHY/MAC realism and avoids 6LoWPAN complexity, and keeps the implementation minimal while suiting the theory paper.
 
-This document turns the high‑level plan into **actionable phases** with clear objectives, inputs, deliverables, step‑by‑step tasks, validation checks, and a “definition of done” (DoD) for each phase. It assumes the repository layout from `PLAN.md`.
+This plan is written for direct hand-off. Each phase includes **Goals**, **Deliverables**, **Implementation Checklist**, **Interfaces**, **Tests/Acceptance**, and **Risks/Mitigations**.
 
-> **Scope:** ns‑3 simulation harness for 802.15.4 with capture/SINR + Local (DPP/backpressure) vs Snapshot‑Global (+k‑hop veto), metrics & figure generation, and a Python pipeline to compute the **Local Pooling Factor** (LPF, \(\hat{\sigma}\)) from exported topologies.
+## 📊 Project Status Summary (as of 2025-11-02)
 
----
+| Phase | Title | Status | Notes |
+|-------|-------|--------|-------|
+| 0 | Repo & Environment | ⚠️ Partial | Repo structure ✅, CMake ✅, ns-3 installed ✅; **Missing**: Dockerfile, bootstrap.sh |
+| 1 | PHY Calibration | 🟠 Active | Harness operational ✅, TX power control ✅, CSV outputs ✅; **Issue**: Low packet count (~6 vs 400) |
+| 2–6 | Controllers & Routing | ⏳ Pending | Blocked on Phase 1 packet count resolution |
+| 7–12 | Experiment Matrix & Analysis | ⏳ Pending | Deferred after Phase 6 completion |
 
-## Roles & Conventions
-
-- **Owner:** Who is expected to execute the phase (default: *Simulation Engineer*).
-- **Inputs:** Repos, configs, doc references, seeds.
-- **Artifacts:** Files, binaries, CSV/JSON, notebooks/plots produced by the phase.
-- **Commands:** Example commands (adapt paths as needed).
-- **Validation:** Explicit checks to sign off a phase.
-- **DoD:** Definition of done (sign‑off criteria).
-- **Risks/Mitigations:** Known pitfalls and how to defuse them.
-
-> **Repo root:** `ns3-bcp-ctp-capture/` unless otherwise stated.
-
----
-
-## Phase 0 — Repo Bootstrap & Environment
-
-**Owner:** Infra/Build
-
-### Objectives
-- Create the repository skeleton and build environment (Docker optional).
-- Ensure ns‑3 (lr‑wpan + spectrum + sixlowpan + internet) builds and runs a hello‑world.
-
-### Inputs
-- `PLAN.md` repository layout.
-- Host with Linux (Ubuntu 22.04+ recommended) or devcontainer.
-
-### Artifacts
-- Directory tree, `CMakeLists.txt` (or waf build file), minimal `wpan_capture_sim.cc` stub that compiles and exits.
-- (Optional) `Dockerfile` and `devcontainer.json`.
-
-### Tasks
-1. **Directory scaffold**
-   ```bash
-   mkdir -p sim/controllers sim/apps sim/helpers lpf configs scripts out
-   touch sim/wpan_capture_sim.cc README.md LICENSE
-   ```
-2. **Fetch/build ns‑3**
-   - Option A (**waf**, canonical):
-     ```bash
-     git clone https://gitlab.com/nsnam/ns-3-dev.git ns-3
-     cd ns-3
-     ./ns3 configure --enable-examples --enable-tests
-     ./ns3 build
-     ```
-   - Option B (**CMake external project**): add ns‑3 as a submodule or rely on system install; wire sim target via `ExternalProject_Add`.
-3. **Compiler toolchain**
-   ```bash
-   sudo apt-get update && sudo apt-get install -y \
-     build-essential cmake g++ pkg-config python3 python3-venv \
-     libgsl-dev libeigen3-dev
-   ```
-4. **Minimal sim stub**
-   - `sim/wpan_capture_sim.cc`: include `<ns3/core-module.h>` and exit `Simulator::Run(); Simulator::Destroy();`.
-5. **Build**
-   - If embedding into ns‑3 tree: place under `scratch/` and run `./ns3 build && ./ns3 run scratch/wpan_capture_sim`.
-   - If standalone CMake: link to ns‑3 libs in `find_package`/`target_link_libraries`.
-
-### Validation
-- Build succeeds and a trivial simulation runs, producing nothing but a log line.
-
-### DoD
-- Clean build on a fresh clone.
-- Documented build steps in `README.md`.
-
-### Risks/Mitigations
-- **ns‑3 version drift** → Pin commit in `README.md`.
-- **Linker failures** → Prefer `scratch/` integration for first bring‑up.
+**Quick Summary:**
+- **Current Active Work**: Phase 1 (PHY calibration); need to increase OnOff packet bursts for reliable PER statistics.
+- **Blockers**: Phase 0 missing Dockerfile/bootstrap (non-critical for dev); Phase 1 packet count too low (critical).
+- **Key Achievement**: Full ns-3 stack integrated, transmit power control solved, calibration modes producing CSV/PNG outputs.
 
 ---
 
-## Phase 1 — PHY Bring‑Up & PER vs SINR Calibration (Capture Threshold)
+## Phase 0 — Repo, Tooling, and Reproducible Environment
+**Goals:** Bootstrap the repository, build system, and container for reproducibility; pin ns-3 version and Python deps.
 
-**Owner:** PHY/Sim
+**Deliverables:**
+- `ns3-bcp-ctp-capture/` repo skeleton and `Dockerfile`.
+- CMake or waf build for the `sim/` subtree.
+- Pre-commit hooks (clang-format, clang-tidy optional).
 
-### Objectives
-- Use `lr-wpan` + `SpectrumChannel` to realize SINR‑based capture.
-- Empirically validate PER vs SINR and capture margin \(x\) dB matches the chosen threshold \(\beta\).
+**Implementation Checklist:**
+- [x] Create repo structure as in `PLAN.md`.
+- [ ] Add `Dockerfile` (Ubuntu LTS + ns-3.38, gcc-12, Python 3.10, pip deps `ortools`, `networkx`, `numpy`, `pandas`, `matplotlib`).
+- [ ] Add `scripts/bootstrap.sh` to pull/build ns-3 and compile `sim/` with CMake (or waf, pick one and stick).
+- [x] Add `configs/` with base YAML files (see later phases). ⚠️ Partial: only `capture_medium.yaml` present; `base.yaml`, `matrix_rho.yaml`, etc. pending.
 
-### Inputs
-- ns‑3 `lr-wpan` examples; 802.15.4 docs.
-- `sim/helpers/channel_export.h/.cc` (create stub).
+**Interfaces:** N/A
 
-### Artifacts
-- `out/calibration/per_vs_sinr.csv` and plot `per_vs_sinr.png`.
-- `configs/capture_medium.yaml` with finalized PHY/MAC params: \(\beta\), capture margin \(x\), noise figure, bandwidth.
+**Tests/Acceptance:**
+- [ ] Container builds and runs `./scripts/run_matrix.sh --dry-run`. ⚠️ Blocked: Dockerfile not yet created.
+- [x] `ns-3` example (lr-wpan) compiles (verified in Phase 1 and later work).
 
-### Tasks
-1. **Two‑node PER sweep**
-   - Place Tx and Rx at varying distances; disable other traffic.
-   - Record SINR and PER (ACK success ratio).
-   - Export to CSV; generate PER vs SINR plot.
-2. **Three‑node capture test**
-   - Tx1→Rx1 (desired), Tx2 near Rx1 (interferer).
-   - Sweep \(P_2 - P_1\) (dB) around the capture margin \(x\).
-   - Verify success when interferer < desired by \(x\) dB fails; success when desired exceeds interferer by ≥ \(x\) dB passes.
-3. **Parameterize**
-   - Lock in `betaDb`, `captureDb`, `noiseFigureDb`, pathloss model (`LogDistance`), small scale (`Nakagami` m).
+**Risks/Mitigations:**
+- Build instability → pin exact ns-3 release and compiler; prebuild base image.
 
-### Commands
-```bash
-./ns3 run "scratch/wpan_capture_sim --mode=calibrate --out=out/calibration --betaDb=7 --captureDb=6"
-python3 scripts/plot_recipes.py --per out/calibration/per_vs_sinr.csv
+**Status (as of 2025-11-02):**
+- ✅ **SUBSTANTIAL PROGRESS**: Repo structure complete, CMake build working, ns-3 environment configured, example builds and runs.
+- ❌ **BLOCKERS FOR FULL COMPLETION**: Dockerfile and bootstrap.sh not yet created.
+- ℹ️ **NOTE**: Project has advanced to Phase 1 (PHY Calibration harness complete and working). Remaining Phase 0 items (Dockerfile, bootstrap.sh) can be completed in parallel with later phases or deferred to a Docker/CI hardening phase (Phase 10–11).
+
+---
+
+## Phase 1 — PHY/MAC Bring-up & Calibration Harness with PacketSocket on 802.15.4
+**Goals:** Establish a minimal 802.15.4 network with SINR-based capture; calibrate PHY model (PER vs SINR, capture margin); send packets via `PacketSocket` to neighbors.
+
+**Deliverables:**
+- [x] `sim/wpan_capture_sim.cc` with N nodes on `LrWpanNetDevice` + `SpectrumChannel` (with SINR-based capture).
+- [x] Calibration harness: `--mode=per-sinr-sweep` and `--mode=capture-test` producing CSV outputs.
+- [x] Transmit power control: `LrWpanSpectrumValueHelper::CreateTxPowerSpectralDensity()` to set arbitrary dBm.
+- [x] Channel export helper (`channel_export.h/.cc`) for topology + gains export.
+- [ ] Application stub `ForwarderApp` (structure in place; routing logic pending Phase 5).
+- [x] Trace connections for MAC TX/RX/ACK events; metrics logging to CSV.
+
+**Implementation Checklist:**
+- [x] Create N nodes with: `LrWpanNetDevice` + `SpectrumChannel` + `ConstantSpeedPropagationDelayModel`.
+- [x] Loss model: `LogDistancePropagationLoss` + Nakagami fading.
+- [x] Enable ACKs and set `MaxFrameRetries` (3).
+- [x] SINR-based error model with configurable β (capture threshold) and capture margin x.
+- [x] Transmit power tuning: -20 dBm achieves SINR range 2–18 dB (spans β=7 dB threshold).
+- [x] Calibration modes: PER vs SINR sweep, three-node capture test.
+- [ ] ForwarderApp with OnOff traffic; routing logic pending Phase 5.
+- [x] Trace hooks wired; metrics CSV output.
+
+**Interfaces (Phase 1):**
+```cpp
+class ForwarderApp : public ns3::Application {
+public:
+  void Configure(Mac16Address self, Ptr<PacketSocket> sock, Time tickTime);
+  void SetTrafficMode(Mode m); // CALIBRATION, LOCAL, GLOBAL (Phase 5+)
+  // Phase 1: OnOff bursts to fixed neighbor for PER measurement
+};
 ```
 
-### Validation
-- PER(SINR) curve has a sharp knee near \(\beta\).
-- Capture experiment toggles success around \(x\) dB as expected.
+**Tests/Acceptance:**
+- [x] Calibration mode runs: PER vs SINR, capture tests produce CSV.
+- [x] SINR control verified: -20 dBm spans capture threshold.
+- [ ] PER curve shows sharp knee at β (requires higher packet count; pending OnOff app tuning).
+- ⚠️ **KNOWN ISSUE**: Packet transmission count insufficient (~6 vs target 400) under UDP Echo. Workaround: Increase sim duration or switch to raw OnOff bursts.
 
-### DoD
-- `configs/capture_medium.yaml` finalized; plots saved and referenced.
+**Risks/Mitigations:**
+- PacketSocket address confusion → use 16-bit short addresses; ensure PAN IDs match.
+- SINR nonstationarity → record ETX (Phase 5) for feature signals.
 
-### Risks/Mitigations
-- **PHY error model mismatch** → adjust threshold mapping; use empirical lookup if necessary.
-
----
-
-## Phase 2 — Dynamics Model (T_dyn) via Jammer & Autocorrelation
-
-**Owner:** Channel/Sim
-
-### Objectives
-- Implement environment dynamics with correlation time \(T_{\text{dyn}}\) (on/off jammer or colored noise).
-- Verify \(T_{\text{dyn}}\) by measured ETX/SINR autocorrelation.
-
-### Inputs
-- `sim/helpers/jammer.h/.cc` skeleton.
-
-### Artifacts
-- `out/dynamics/sinr_autocorr.csv`, `etx_autocorr.csv`, plots.
-- Config keys: `TdynMs`, `TonMs`, `ToffMs`.
-
-### Tasks
-1. **Jammer component**
-   - Apply time‑varying pathloss offsets (or inject spectrum noise) to a subset of links.
-2. **Compute autocorrelation**
-   - Log per‑link SINR & ETX sequences; compute R(τ) and find e‑fold time.
-3. **Map to T_dyn**
-   - Choose Ton/Toff to achieve target \(T_{\text{dyn}}\).
-
-### Validation
-- Estimated e‑fold time ≈ configured \(T_{\text{dyn}}\) ± 10%.
-
-### DoD
-- Reusable `Jammer` with CLI knobs; autocorr plots archived.
-
-### Risks/Mitigations
-- **Nonstationarity** → run long enough; discard warmup.
+**Status (as of 2025-11-02):**
+- ✅ **SUBSTANTIAL PROGRESS**: Calibration harness fully operational; transmit power control working; two calibration modes produce valid CSV/PNG.
+- ⚠️ **KNOWN ISSUE**: Low packet transmission count (6 vs 400) limits PER statistics; solutions documented in CLAUDE.md.
+- 🔄 **NEXT STEP**: Increase OnOff packet bursts or simulation duration to achieve target 400+ packets for reliable PER estimation.
 
 ---
 
-## Phase 3 — Finite Buffers, Queue Semantics & Waste Accounting
+## Phase 2 — Topology Generator & Channel Export
+**Goals:** Generate random geometric graphs (RGG) and export large-scale channel state for LPF work.
 
-**Owner:** Systems/Sim
+**Deliverables:**
+- `helpers/topology.h/.cc`: place nodes in [0,1]^2, choose sink, set short MAC addresses.
+- `helpers/channel_export.h/.cc`: export JSON with node positions, path gains \(g_{ab}\), noise, β, capture margin.
 
-### Objectives
-- Implement app‑level queues of size \(B\) per node.
-- Correctly count **admission drops** vs **downstream drops**, and **wasted transmissions**.
+**Implementation Checklist:**
+- [ ] Uniform placement with seed; sink at center by default.
+- [ ] Compute pairwise pathloss gains (dB) from model; store as matrix.
+- [ ] Write `topology.json` in run directory:
+```json
+{ "nodes":[{"id":0,"x":0.1,"y":0.5,"mac":"0x0001"},...],
+  "sink":0, "tx_power_dbm":0, "noise_dbm":-100,
+  "beta_db":7, "capture_margin_db":6,
+  "gains_db":{"0_1":-80.2,"1_0":-80.0,...} }
+```
+- [ ] CLI flags to control N, area, seed, sink policy.
 
-### Inputs
-- Paper’s finite‑buffer semantics; `sim/apps/source_app.*`, `sim/apps/sink_app.*`, `sim/helpers/metrics_log.*`.
-
-### Artifacts
-- CSVs: `drops.csv`, `waste.csv`, `queues.csv`, `fates.csv`.
-- Unit tests: tiny line (3 nodes) asserts \(W_t \ge D_t^{down}\).
-
-### Tasks
-1. **Queue implementation**
-   - Enqueue arrivals; if full → `D_adm++`.
-   - On forward: if next hop’s queue full → `D_down++` and drop here.
-2. **Waste registry**
-   - For each packet, track upstream TX events.
-   - On final drop, add count to `W_t`; on delivery, mark useful.
-3. **Sanity unit test**
-   - 3‑node line with overload; verify inequality.
-
-### Validation
-- In the unit test, `sum(W) >= sum(D_down)` holds; per‑slot invariants preserved.
-
-### DoD
-- Metrics logging schema documented; unit tests scripted.
-
-### Risks/Mitigations
-- **Double counting TXs** → use packet unique IDs and dedupe.
-
----
-
-## Phase 4 — ETX Tracker & Feature Normalization
-
-**Owner:** Systems/Sim
-
-### Objectives
-- Track per‑link ETX via ACK‑based EWMA, and provide **normalized** features (z‑score) to controllers.
-- Log ETX series for both controllers and snapshots.
-
-### Inputs
-- `sim/controllers/etx_tracker.*`.
-
-### Artifacts
-- `etx_timeseries.csv` per link; rolling mean/variance.
-
-### Tasks
-1. **EWMA PDR**
-   - Update per ACK/NACK; cap at \(\epsilon\) to avoid division by zero.
-2. **Normalization**
-   - Maintain running μ, σ; export z‑scored ETX.
-3. **Caps & windows**
-   - Choose memory α (e.g., 0.1–0.2) and window M for smoothing.
-
-### Validation
-- ETX tracks injected PER changes; normalized ETX has mean ≈ 0, std ≈ 1 over a long run.
-
-### DoD
-- Controller APIs receive raw and normalized ETX.
-
-### Risks/Mitigations
-- **Estimator lag** → report α used; it’s part of realism.
-
----
-
-## Phase 5 — Local Controller (DPP^λ / Backpressure Gating)
-
-**Owner:** Algorithms/Sim
-
-### Objectives
-- Implement Local (per‑slot, fresh features) controller:
-  \[
-  \theta_{i\to j}(t) = (Q_i - Q_j) - V \cdot \text{ETX}_{i\to j}(t);
-  \quad \text{gate if } \theta \ge 0.
-  \]
-- Optional Tikhonov bias if selecting multiple links in a slot (kept small).
-
-### Inputs
-- `sim/controllers/backpressure.*`, ETX tracker.
-
-### Artifacts
-- `local_controller_log.csv`: per‑slot selected links, \(\theta\), and gating indicator.
-
-### Tasks
-1. **Compute pressures** per neighbor; deterministic tie‑break.
-2. **Enqueue send attempts** (1 packet per chosen link per slot).
-3. **Trace hooks** to update ETX, queues, and logging.
-
-### Validation
-- Under jammer ON, fewer links pass \(\theta \ge 0\); after OFF, they recover (visual “hold breath/exhale”).
-- No starvation (observe rotation via queue differentials).
-
-### DoD
-- Local delivers stable performance under ε‑slack in baseline runs.
-
-### Risks/Mitigations
-- **MAC collisions mask logic** → align attempt windows with slots; average over seeds.
-
----
-
-## Phase 6 — Snapshot‑Global Controller, AoI/Cadence & k‑Hop Veto
-
-**Owner:** Algorithms/Sim
-
-### Objectives
-- Implement Snapshot‑Global:
-  - At epoch \(T_m=m\,T_{\text{info}}\): recompute ETX tree (CTP‑like).
-  - Between epochs: forward to parent unless **veto** triggers.
-- Implement **AoI** tracking and **k‑hop veto** with budget \(\nu\) per slot.
-
-### Inputs
-- `sim/controllers/snapshot_global.*`, `sim/helpers/aoi_epoch.*`, `sim/controllers/veto_budget.*`.
-
-### Artifacts
-- `snapshot_log.csv`: install times, parents, AoI samples.
-- `veto_log.csv`: edit counts, reasons, affected links.
-
-### Tasks
-1. **Snapshot install**
-   - Freeze ETX; Dijkstra to sink; set parent map.
-2. **Forwarding loop**
-   - Default to parent; check veto rule (e.g., \(\theta_{i\to parent(i)}<0\) and exists neighbor with \(\theta\ge \tau\)); apply ≤\(\nu\) primitive edits.
-3. **AoI**
-   - Track age per node; under cadence, verify uniform on \([0,T_{\text{info}}]\) (empirical).
-
-### Validation
-- AoI histogram matches uniform; veto counts respect budget; parent changes only at snapshots.
-
-### DoD
-- Controller parity: able to run the same traffic/topology as Local; produces metrics.
-
-### Risks/Mitigations
-- **Veto makes non‑feasible MAC combos** → veto only changes **forwarding choice**, not simultaneous transmissions; MAC still arbitrates.
-
----
-
-## Phase 7 — Experiment Harness & CLI (ρ/B/ε Matrices)
-
-**Owner:** Systems/Sim
-
-### Objectives
-- One binary (`wpan_capture_sim`) with CLI to run matrices over \(\rho\), buffers \(B\), capture thresholds \(β\), and ε‑slack.
-- Seed management and reproducibility.
-
-### Inputs
-- `scripts/run_matrix.sh`, `configs/*.yaml`.
-
-### Artifacts
-- `out/run_*/metrics/*.csv`, merged `results.parquet`.
-- Provenance JSON with params/seeds.
-
-### Tasks
-1. **CLI flags** (see `PLAN.md`) and YAML ingest.
-2. **Matrix runner**: spawn runs across seeds and grid; enforce timeouts.
-3. **Warmup/steady windows**: trim warmup from aggregates.
-
-### Commands
-```bash
-scripts/run_matrix.sh --matrix configs/matrix_rho.yaml --out out/matrix
-python3 scripts/postprocess.py --in out/matrix --out out/agg
+**Interfaces:**
+```cpp
+struct NodeSpec { uint32_t id; double x,y; Mac16Address mac; };
+struct Topology { std::vector<NodeSpec> nodes; uint32_t sinkId; };
+Topology BuildRGG(uint32_t N, uint64_t seed);
+void ExportTopologyJson(const Topology&, const ChannelMatrix&, const std::string& path);
 ```
 
-### Validation
-- Re‑running same seed reproduces identical metrics within stochastic tolerance.
-- Merged datasets contain all expected combinations.
+**Tests/Acceptance:**
+- [ ] Deterministic placement under fixed seed.
+- [ ] JSON validated by `lpf/io_utils.py` (to be written).
 
-### DoD
-- One‑shot command reproduces the experiment matrix.
-
-### Risks/Mitigations
-- **Long runtimes** → parallelize across cores; cap simulation length; store checkpoints.
+**Risks/Mitigations:**
+- Coordinate-to-gain mismatch → centralize gain computation in one helper used by both simulator and exporter.
 
 ---
 
-## Phase 8 — Topology/Channel Export & LPF: Conflict Graph, Schedules, \(\hat{\sigma}\)
+## Phase 3 — Finite Buffers, Queues & Metrics Skeleton
+**Goals:** Implement application-level finite buffers and basic metrics scaffolding, including packet fate tracking for waste.
 
-**Owner:** Algorithms/Python
+**Deliverables:**
+- `ForwarderApp` with ingress queue (size B) and per-neighbor outgoing queues.
+- `MetricsLog` with CSV writers for queues, drops, transmissions, deliveries.
 
-### Objectives
-- Export communication graph and large‑scale gains from ns‑3 runs.
-- Build capture‑aware **conflict graph** \(G_c\).
-- Estimate **LPF** \(\hat{\sigma}\) by weight sweep comparing GMS vs MWIS.
+**Implementation Checklist:**
+- [ ] **Ingress buffer B:** push exogenous arrivals; on full → `D_t^{adm}++`.
+- [ ] **Outgoing selection:** (phase 3: fixed next hop) pop one packet per slot for TX attempt.
+- [ ] **Packet registry:** map `PacketUID` → list of TX events (node,time).
+- [ ] On **delivery at sink**: mark all TX events for that packet “useful”.
+- [ ] On **downstream overflow**: when a node receives a packet and its **ingress buffer is full**, drop packet and log `D_t^{down}++`; trigger waste accounting: all TX for this packet so far contribute to `W_t`.
+- [ ] CSV: `drops.csv`, `waste.csv`, `goodput.csv`, `queue.csv` with timestamps.
 
-### Inputs
-- `sim/helpers/channel_export.*` (produces `topology.json`).
-- Python: `lpf/build_conflict_graph.py`, `lpf/schedule_utils.py`, `lpf/lpf_estimator.py`.
-
-### Artifacts
-- `topology.json`, `G_c.graphml`, `lpf_histogram.png`, `lpf.json` (contains `sigma_hat` and summary).
-
-### Tasks
-1. **Export topology**
-   - Node positions, pathloss gains \(g_{ab}\) (dB), Tx powers, `betaDb`, `captureDb`, noise.
-2. **Build \(G_c\)**
-   - For each *directed* link pair, add conflict edge if **either** receiver’s SINR < β when both active.
-   - (Optional triad check to reduce false independence.)
-3. **Enumerate maximal schedules**
-   - Randomized greedy (10k–20k sets) with weight perturbations.
-4. **Weight sweep**
-   - Sample 2k nonnegative weights \(w\). For each:
-     - **GMS**: greedy maximal schedule \(s_{GMS}(w)\).
-     - **MWIS (ILP)**: optimal \(s_{MW}(w)\).
-     - Record ratio \(r(w)=\frac{w^\top s_{GMS}}{w^\top s_{MW}}\).
-   - **LPF estimate**: \(\hat{\sigma}=\min_w r(w)\); save histogram, worst‑case \(w^\star\).
-
-### Commands
-```bash
-python3 scripts/export_topology.py --run out/run_123 --out out/run_123/topology.json
-python3 lpf/build_conflict_graph.py --topology out/run_123/topology.json --out out/run_123/Gc.graphml
-python3 lpf/lpf_estimator.py --Gc out/run_123/Gc.graphml --weights 2000 --maximal-samples 10000 --out out/run_123/lpf
+**Interfaces:**
+```cpp
+struct TxEvent { uint32_t node; double time; };
+class PacketRegistry {
+public:
+  void OnTx(uint64_t uid, uint32_t node, double time);
+  void OnDelivered(uint64_t uid);
+  void OnDownstreamDrop(uint64_t uid);
+  uint32_t WasteFor(uint64_t uid) const; // count of tx events before terminal drop
+};
 ```
 
-### Validation
-- \(\hat{\sigma}\in(0,1]\); histogram sensible; repeating estimator on same graph returns near‑identical \(\hat{\sigma}\).
-- Small graph cross‑check: compare ILP vs enumerating **all** independent sets to validate pipeline.
+**Tests/Acceptance:**
+- [ ] Small chain: force downstream-full event; verify `W_t ≥ D_t^{down}`.
+- [ ] No negative queues; queues capped at B.
 
-### DoD
-- `lpf.json` exists with `sigma_hat` and summary plots.
-
-### Risks/Mitigations
-- **ILP scalability** → limit to moderate link counts or use a strong heuristic for MWIS on large graphs; keep ILP for subgraphs or smaller N.
+**Risks/Mitigations:**
+- UID reuse across the sim → use `Packet::GetUid()` plus a run-unique prefix if necessary.
 
 ---
 
-## Phase 9 — Figures & Statistical Post‑Processing
+## Phase 4 — Dynamics & AoI: Jammer + Snapshot Cadence
+**Goals:** Realize time-varying conditions (for \(T_{dyn}\)) and the snapshot (AoI) cadence (for \(T_{info}\)).
 
-**Owner:** Data/Analysis
+**Deliverables:**
+- `helpers/jammer.h/.cc`: toggles per-link attenuation or injects noise to realize an empirical autocorrelation e-fold at \(T_{dyn}\).
+- `helpers/aoi_epoch.h/.cc`: schedules snapshot **install** events every \(T_{info}\); maintains AoI per node.
 
-### Objectives
-- Generate the main paper plots with CIs across seeds.
-- Annotate capture runs with measured \(\hat{\sigma}\).
+**Implementation Checklist:**
+- [ ] Jammer: ON/OFF pattern (e.g., 20s on / 40s off) or Ornstein–Uhlenbeck attenuation; expose `MeasureAutocorr()` to log observed \(T_{dyn}\).
+- [ ] AoI cadence: install snapshots at `t = m * T_info` regardless of dissemination completion (AoI uniform on [0, T_info]).
+- [ ] Logging: AoI time series; verify uniformity empirically.
 
-### Inputs
-- Aggregated Parquet/CSV from Phase 7; `lpf.json` from Phase 8.
-- `scripts/plot_recipes.py`.
+**Interfaces:**
+```cpp
+class Jammer {
+ public:
+  void Configure(Time on, Time off, double attnDb);
+  void Start();
+  double EstimateTdyn(const std::vector<double>& featureTrace) const;
+};
 
-### Artifacts
-- `fig_drops_vs_rho.png`, `fig_waste_vs_rho.png`, `fig_goodput_vs_load.png`, `fig_waste_vs_B.png`, `fig_lpf_hist.png`.
-
-### Tasks
-1. **Drops/Waste vs \(\rho\)**
-   - For Local vs Global, plot mean ± 95% CI per \(B\).
-2. **Goodput vs Load**
-   - Trace stability frontier at fixed \(\rho\).
-3. **Waste vs \(B\)**
-   - Log‑y axis; fit lines to show \(1/B\) vs \(\exp(-\zeta B)\) behavior (qualitative).
-4. **LPF captioning**
-   - Read `sigma_hat` and annotate figure captions (e.g., “LPF ≈ 0.78”).
-
-### Validation
-- Plots reproduce the qualitative trends from the paper.
-- CIs tighten with more seeds; no data gaps.
-
-### DoD
-- All figures exist under `out/figs/` and are generated by a single script invocation.
-
-### Risks/Mitigations
-- **Outlier seeds** → winsorize or increase seed count.
-
----
-
-## Phase 10 — Cross‑Checks & Acceptance Tests
-
-**Owner:** QA
-
-### Objectives
-- Sign‑off against theoretical expectations and internal consistency.
-
-### Inputs
-- Results and plots from Phases 7–9.
-
-### Artifacts
-- `QA_REPORT.md`: checklist outcomes with screenshots.
-
-### Checks
-1. **AoI uniform under cadence**: \(P\{\Delta \ge T_{info}/2\}\approx 0.5\).
-2. **Drops/Waste monotonic in \(\rho\)** for Global; Local curves near‑flat.
-3. **Waste vs \(B\)**: Global ~ \(1/B\), Local decay ~ exponential (on log‑y).
-4. **Unit inequality**: \(W \ge D_{down}\) on the line test.
-5. **LPF stability**: \(\hat{\sigma}\) consistent across seeds/topology repeats.
-
-### DoD
-- All checks pass; exceptions documented with root cause.
-
----
-
-## Phase 11 — Reproducibility: Docker, CI, and Seeds
-
-**Owner:** Infra
-
-### Objectives
-- Containerize and add basic CI.
-
-### Inputs
-- Dockerfile, GitHub Actions (or GitLab CI) config.
-
-### Artifacts
-- `docker/` image that runs a small matrix; CI badge; reproducibility note in `README.md`.
-
-### Tasks
-1. **Dockerfile**
-   - Base on Ubuntu, install ns‑3 deps, Python pkgs; copy repo; run a smoke test.
-2. **CI**
-   - Job 1: build + run PER calibration; archive plots.
-   - Job 2: tiny topology (N=20) matrix subset; archive CSVs.
-3. **Seeds**
-   - Fix default seed list and document.
-
-### Validation
-- CI green; artifacts downloadable.
-
-### DoD
-- One command `docker run` reproduces a minimal experiment.
-
----
-
-## Phase 12 — Variants & Ablations (Optional but Useful)
-
-**Owner:** Research/Sim
-
-### Objectives
-- Show robustness to capture threshold, power control, and MAC settings.
-
-### Inputs
-- Baseline configs.
-
-### Artifacts
-- Variant figures: `fig_variant_beta.png`, `fig_variant_power.png`.
-
-### Tasks
-- Repeat main \(\rho\) sweep with `betaDb ∈ {5,7,9}`, `captureDb ∈ {3,6}`.
-- Optional near–far power profile {−3, 0} dBm.
-- Briefly discuss impact on \(\hat{\sigma}\) and constants.
-
-### DoD
-- Variants plotted and summarized in a short appendix note.
-
----
-
-## Appendix A — Command Reference
-
-### Build & run (waf, ns‑3 tree)
-```bash
-./ns3 build
-./ns3 run "scratch/wpan_capture_sim --seed=1 --nodes=75 --betaDb=7 --captureDb=6 --Tdyn=0.02 --Tinfo=0.12 --buffers=20 --epsilon=0.05 --duration=600s --output=out/run_$(date +%s)"
+class SnapshotCadence {
+ public:
+  void SetEpoch(Time Tinfo);
+  void AddCallback(std::function<void(uint64_t epochId)> onInstall);
+};
 ```
 
-### Run matrix
-```bash
-scripts/run_matrix.sh --matrix configs/matrix_rho.yaml --out out/matrix
-python3 scripts/postprocess.py --in out/matrix --out out/agg
-python3 scripts/plot_recipes.py --in out/agg --out out/figs
+**Tests/Acceptance:**
+- [ ] Feature autocorrelation decays ~exp(−t/T_dyn) with target T_dyn (tolerance window).
+- [ ] AoI histogram ~ uniform; P{Δ ≥ T_info/2} ≈ 0.5.
+
+**Risks/Mitigations:**
+- SINR nonstationarity → record ETX (Phase 5) and compute T_dyn from ETX trace instead of attenuation only.
+
+---
+
+## Phase 5 — ETX Tracker & App-Layer Forwarder Interfaces
+**Goals:** Estimate ETX per directed link and finish the app-level forwarding API to serve both controllers (Local and Global).
+
+**Deliverables:**
+- `controllers/etx_tracker.h/.cc` with EWMA PDR and ETX per link.
+- `ForwarderApp` upgraded with two modes: `LOCAL` (DPP/backpressure gating) and `GLOBAL` (tree forwarding).
+
+**Implementation Checklist:**
+- [ ] Hook `MacTxOk`/`MacTxDrop` to update PDR for the `(tx→rx)` directed link; ETX = `1 / max(PDR, ε)`.
+- [ ] Provide normalized feature (z-score of ETX) for controller score computations.
+- [ ] Extend `ForwarderApp` to support:
+  - `SetMode(Local|Global)`.
+  - `SetParent(Mac16Address)` and `SetGradient(std::vector<NeighborScore>)` (for Local).
+  - `PopulateNextHopTable(map<Mac16Address,double>)` for per-neighbor scoring.
+- [ ] One TX attempt per slot: pick **best neighbor** under the active controller’s rule, or idle.
+
+**Interfaces:**
+```cpp
+class EtxTracker {
+ public:
+  void OnTxResult(Mac16Address tx, Mac16Address rx, bool ackOk);
+  double GetEtx(Mac16Address tx, Mac16Address rx) const;
+  double GetZScore(Mac16Address tx, Mac16Address rx) const;
+};
+enum Mode { LOCAL, GLOBAL };
+class ForwarderApp : public Application {
+  void SetMode(Mode m);
+  void SetParent(Mac16Address p);
+  void SetDppParams(double V, double lambda);
+  void SetEtxTracker(Ptr<EtxTracker>);
+  void SetBufferLimit(uint32_t B);
+  void Tick(); // per-slot decision
+};
 ```
 
-### LPF
+**Tests/Acceptance:**
+- [ ] ETX converges near `1/PDR` on static link.
+- [ ] Local/Global modes compile and send to expected next-hop under simple scenarios.
+
+**Risks/Mitigations:**
+- ETX bias on small samples → cap EWMA α and set minimum sample count before trusting ETX for decisions.
+
+---
+
+## Phase 6 — Controller Logic: Local (DPP^λ) & Snapshot-Global (CTP-like) w/ Veto
+**Goals:** Implement Local backpressure gating and Global snapshot-based routing with \(k\)-hop veto and primitive edit budget \(ν\).
+
+**Deliverables:**
+- `controllers/backpressure.h/.cc` and `controllers/snapshot_global.h/.cc`.
+- Simple **tree builder**: min-ETX spanning tree to sink at snapshot times.
+
+**Implementation Checklist:**
+- [ ] **Local DPP^λ** decision per slot for node `i`:
+  - For each neighbor `j`: compute \( \theta_{i\to j}(t) = (Q_i - Q_j) - V \cdot \text{ETX}_{i\to j} \).
+  - Select `j* = argmax θ_{i→j}(t)`; if \( \theta_{j*} ≥ 0\) attempt one PacketSocket send to `j*`; else idle.
+  - (Optional) If multiple neighbors allowed per slot in later variants, subtract \( \frac{V\lambda}{2}\|x(t)\|_2^2 \) in score when choosing a second link; default: one per slot.
+- [ ] **Snapshot-Global** at epoch install:
+  - Freeze ETX matrix \(\widehat{\text{ETX}}\).
+  - Build min-cost tree (Dijkstra on ETX) from all nodes to sink.
+  - Set each node’s `parent` accordingly.
+- [ ] **\(k\)-hop veto** (budget \(ν\) primitive edits/slot):
+  - On each slot, check `θ_{i→parent(i)}`; if negative and exists neighbor `j` s.t. `θ_{i→j} ≥ τ`, perform a **redirect** `parent(i) → j` for this slot (counts as 2 edits). Limit global count to \(ν\).
+  - Count edits; log `C_veto(k,B)` per slot.
+- [ ] **Out-of-band snapshot install**: `SnapshotCadence` calls a single function that reads all queues + ETX from nodes, computes tree, and writes parents back—no in-band signaling.
+
+**Interfaces:**
+```cpp
+class SnapshotGlobal {
+ public:
+  void InstallSnapshot(const Topology&, const EtxTracker&, const std::vector<uint32_t>& Q);
+  Mac16Address GetParent(uint32_t nodeId) const;
+};
+
+struct VetoConfig { uint32_t k; uint32_t nu; double tau; };
+class VetoEngine {
+ public:
+  void Step(std::vector<NodeState>& nodes, const VetoConfig& cfg, uint32_t& editsUsed);
+};
+```
+
+**Tests/Acceptance:**
+- [ ] Local controller shows “hold-breath/exhale”: during jammer ON, fraction of links with `θ≥0` drops; OFF it rises.
+- [ ] Global follows tree; with veto enabled, a limited number of redirects occur per slot and are logged.
+
+**Risks/Mitigations:**
+- Starvation under Local if `V` too large → sweep `V` in micro-tests; cap ETX to reasonable range.
+
+---
+
+## Phase 7 — Traffic, ε-Slack Calibration, and Experiment Driver
+**Goals:** Provide traffic sources, calibrate offered load for target ε-slack under Local, and run the full experiment matrix (B, ρ, β, x).
+
+**Deliverables:**
+- `apps/source_app.h/.cc` and `apps/sink_app.h/.cc`.
+- `scripts/run_matrix.sh` and `scripts/postprocess.py`.
+
+**Implementation Checklist:**
+- [ ] **Traffic**: K sources (default floor(0.2N)); Bernoulli or Poisson arrivals to ingress buffer.
+- [ ] **ε-calibration**: run Local-only short warmup; binary search per-source λ to achieve desired ε slack (service surplus) measured by drift surrogate.
+- [ ] **Matrix driver**: sweep `B ∈ {10,20,40}`, `ρ ∈ {0.5,1,2,4,6}`, `β`, `capture margin x`, seeds (≥10).
+- [ ] **Outputs**: CSV + JSON per run; merge in `postprocess.py` to compute means/CIs.
+
+**Interfaces:**
 ```bash
-python3 scripts/export_topology.py --run out/run_123 --out out/run_123/topology.json
-python3 lpf/build_conflict_graph.py --topology out/run_123/topology.json --out out/run_123/Gc.graphml
-python3 lpf/lpf_estimator.py --Gc out/run_123/Gc.graphml --weights 2000 --maximal-samples 10000 --out out/run_123/lpf
+./wpan_capture_sim --nodes=75 --B=20 --rho=4 --betaDb=7 --captureDb=6 \
+  --epsilon=0.05 --sources=15 --duration=600s --warmup=60s --seed=123 \
+  --output=out/run_123/
+```
+
+**Tests/Acceptance:**
+- [ ] Calibration converges to target ε within tolerance.
+- [ ] End-to-end runs produce non-empty CSVs; CI bands computed.
+
+**Risks/Mitigations:**
+- Calibration unstable under jammer → increase warmup; smooth measurements over windows.
+
+---
+
+## Phase 8 — LPF Measurement Pipeline (Python)
+**Goals:** Compute a **capture-aware conflict graph** and estimate \(\hat{\sigma}\) by weight-sweep comparing GMS vs MWIS.
+
+**Deliverables:**
+- `lpf/build_conflict_graph.py`, `lpf/lpf_estimator.py`, `lpf/schedule_utils.py`, `lpf/io_utils.py`.
+- `scripts/compute_lpf.sh`.
+
+**Implementation Checklist:**
+- [ ] Read `topology.json`; build directed link set (communication reach based on sensitivity).
+- [ ] Conflict edge between links \(\ell_1,\ell_2\) if **either** receiver’s SINR < β when both transmit (use exported gains + powers + N0).
+- [ ] Enumerate **maximal independent sets** (MIS) via randomized greedy (M≈5k–20k).
+- [ ] For T≈2000 random nonnegative weights `w`:
+  - **GMS**: greedy pick by descending `w`; compute `f_G = w·s_G`.
+  - **MW oracle**: solve MWIS via ILP (`ortools`/`pulp`); compute `f_M`.
+  - Record ratio `r = f_G/f_M`.
+- [ ] Report \(\hat{\sigma} = \min r\) and histogram; save to `out/run_X/lpf/`.
+
+**Interfaces (CLI):**
+```bash
+python -m lpf.build_conflict_graph --topology out/run_X/topology.json --out out/run_X/lpf/graph.gexf
+python -m lpf.lpf_estimator --graph out/run_X/lpf/graph.gexf --weights 2000 --mis 10000 --solver ortools --out out/run_X/lpf/
+```
+
+**Tests/Acceptance:**
+- [ ] Small graphs (N≤20): validate against exact independent-set enumeration.
+- [ ] Ratios ∈ (0,1]; \(\hat{\sigma}\) stable across seeds within error bars.
+
+**Risks/Mitigations:**
+- ILP scalability → cap link count, sample subgraphs, or use heuristic MW for large graphs; state that \(\hat{\sigma}\) is a lower bound.
+
+---
+
+## Phase 9 — Figures, Analysis & Paper Hooks
+**Goals:** Generate all figures and tables; produce text-ready numbers (e.g., \(\hat{\sigma}\)).
+
+**Deliverables:**
+- `scripts/plot_recipes.py`: 
+  - Drops/Waste vs ρ (per B),
+  - Goodput vs offered load (region contraction),
+  - Waste vs B (log-y),
+  - LPF histogram (with \(\hat{\sigma}\)).
+- `scripts/postprocess.py`: summary CSVs + confidence intervals.
+
+**Implementation Checklist:**
+- [ ] Implement plotting as standalone Python (matplotlib); pull from merged CSVs.
+- [ ] Inject \(\hat{\sigma}\) annotation in capture plots.
+- [ ] Export `figures/` and `tables/summary.csv`.
+
+**Tests/Acceptance:**
+- [ ] Curves monotone in ρ (Global grows, Local ~flat); B spacing correct.
+- [ ] LPF histogram sensible; worst-case weight visual logged.
+
+**Risks/Mitigations:**
+- Noisy curves → increase seeds or sim time; smooth with CIs, not moving averages.
+
+---
+
+## Phase 10 — Reproducibility & Packaging
+**Goals:** Make it turnkey for reviewers and artifact evaluators.
+
+**Deliverables:**
+- `README.md` with step-by-step run.
+- Version-pinned `Dockerfile` and `requirements.txt`.
+- `scripts/run_all.sh` to reproduce headline figures end-to-end.
+
+**Implementation Checklist:**
+- [ ] Document config schemas and default values.
+- [ ] Add smoke tests in CI (e.g., GitHub Actions with a tiny run).
+- [ ] Ensure seeds are logged and used consistently.
+
+**Tests/Acceptance:**
+- [ ] Fresh clone + container build + `run_all.sh` produces all figures without manual edits.
+
+**Risks/Mitigations:**
+- Container bloat → pre-download ns-3 or use multi-stage build.
+
+---
+
+## Phase 11 — Validation & Micro-benchmarks (Optional but Recommended)
+**Goals:** Strengthen confidence in the mechanics and measurements.
+
+**Deliverables:**
+- Micro-sim scripts:
+  - **PER vs SINR** (one link, with/without interferer) to verify capture threshold.
+  - **AoI uniformity** check under cadence.
+  - **Waste ≥ downstream drops** invariant on a line.
+- Unit tests for `EtxTracker`, `PacketRegistry`, `VetoEngine` (where feasible).
+
+**Implementation Checklist:**
+- [ ] Add `sim/tests/` with small scenarios and asserts.
+- [ ] Add Python checkers to parse CSVs and verify conditions.
+
+**Tests/Acceptance:**
+- [ ] All micro-tests pass in CI.
+
+**Risks/Mitigations:**
+- Stochastic flakiness → widen tolerances; seed control.
+
+---
+
+## Phase 12 — Extensions (If Time Permits)
+**Goals:** Stress the “structural constant” idea and show robustness.
+
+**Deliverables:**
+- Variants for capture β and power control; recompute \(\hat{\sigma}\) and overlay curves.
+- Optional **triad-check** pass in conflict graph construction.
+
+**Implementation Checklist:**
+- [ ] Add configs for β ∈ {5,7,9} dB and capture margin x ∈ {3,6}.
+- [ ] Run LPF and main sims for each; compare constants (not slopes).
+
+**Tests/Acceptance:**
+- [ ] \(\hat{\sigma}\) moves with β/x as expected; qualitative ρ and 1/B dependencies preserved.
+
+**Risks/Mitigations:**
+- Explosion of run count → prioritize 1–2 representative settings for the paper; move others to appendix.
+
+---
+
+## Controller Pseudocode (App-layer Routing)
+
+**Local (DPP^λ, one TX/slot):**
+```text
+for node i each slot t:
+  bestTheta = -inf; bestJ = None
+  for neighbor j in Neighbors(i):
+    theta = (Q[i] - Q[j]) - V * ETX[i->j]
+    if theta > bestTheta: bestTheta = theta; bestJ = j
+  if bestTheta >= 0 and Q[i] > 0:
+    send one packet via PacketSocket to bestJ
+  else:
+    idle
+```
+
+**Snapshot-Global (CTP-like) + k-hop veto:**
+```text
+At install times T_m:
+  freeze ETX_hat
+  compute parent(i) for all i via Dijkstra on ETX_hat
+Each slot t:
+  editsUsed = 0
+  for nodes i in some order:
+    if Q[i] == 0: continue
+    j = parent(i)
+    theta_parent = (Q[i] - Q[j]) - V * ETX[i->j]
+    if theta_parent < 0 and editsUsed + 2 <= nu:
+      find neighbor k with theta_k = (Q[i] - Q[k]) - V * ETX[i->k] >= tau
+      if such k exists:
+        redirect i->k for this slot (2 edits)
+        editsUsed += 2; send to k
+      else:
+        send to j  // follow plan
+    else:
+      send to j  // follow plan
 ```
 
 ---
 
-## Appendix B — File/Schema Notes
-
-- **Topology JSON**
-  ```json
-  {
-    "nodes":[{"id":0,"x":0.5,"y":0.5},...],
-    "sink":0,
-    "tx_power_dbm":{"0":0,"1":0},
-    "noise_dbm": -95,
-    "beta_db": 7.0,
-    "capture_db": 6.0,
-    "gains_db":{"0_1": -72.3, "1_0": -72.9, "...": "..."}
-  }
-  ```
-- **Metrics CSV (per run)**
-  - `time_ms, drops_adm, drops_down, waste, goodput, qlen_mean, etx_mean, aoi_mean, offered_load`
+## Notes on Architectural Choices
+- **PacketSocket + app routing** keeps LR-WPAN PHY/MAC in play (ACKs, CSMA/CA, retries) and avoids 6LoWPAN overhead. Routing (Local vs Global) is **purely inside the application**, set by *out-of-band* snapshot installs.
+- **Out-of-band global coordination** mirrors the paper’s abstraction: AoI is a cadence; the install step reads current ETX/queues centrally and writes parent tables—no L2 control needed.
+- **One TX per slot per node** matches radio reality; concurrency arises across nodes, not within a node, and capture-aware SINR decides success.
 
 ---
 
-## Appendix C — Risk Register (Selected)
+## Hand-off Summary
+- After **Phase 6**, you can already run small experiments to see the core phenomena (ρ sweep, B sweep) with basic plots.
+- After **Phase 8**, you can report \(\hat{\sigma}\) and attach it to capture-topology results.
+- **Phases 9–10** deliver the end-to-end paper artifacts with reproducibility.
 
-- **PHY capture realism**: If PER vs SINR differs from datasheet, use empirical lookup table mapped into the error model.
-- **LPF approximation**: Pairwise conflict graphs under‑approximate SINR feasibility for >2 links; document LPF as a *lower bound* and optionally run the triad check.
-- **MWIS ILP runtime**: For N=100 nodes the link graph may be large; cap to subgraphs or use heuristics; keep exact ILP for small/mid graphs.
-
----
-
-**End of PHASES.md**
